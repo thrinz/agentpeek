@@ -509,10 +509,20 @@ function showMenu(items, anchor) {
     });
     menu.appendChild(b);
   }
-  const rect = anchor.getBoundingClientRect();
-  menu.style.top = `${rect.bottom + 2}px`;
-  menu.style.left = `${Math.max(8, rect.left - 120)}px`;
+  // measure off-screen, then place — flipping up / clamping to the viewport so
+  // menus near the bottom edge stay fully visible.
+  menu.style.visibility = 'hidden';
   document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  const mh = menu.offsetHeight, mw = menu.offsetWidth;
+  let top = rect.bottom + 2;
+  if (top + mh > window.innerHeight - 8) {
+    top = Math.max(8, rect.top - mh - 2);  // not enough room below → flip above
+  }
+  let left = Math.min(rect.left - 120, window.innerWidth - mw - 8);
+  menu.style.top = `${Math.max(8, top)}px`;
+  menu.style.left = `${Math.max(8, left)}px`;
+  menu.style.visibility = '';
 }
 
 function openSessionMenu(s, anchor) {
@@ -844,6 +854,7 @@ function openChat(name) {
   $('chat-title').textContent = name;
   $('chat-log').textContent = '';
   chatTotalCost = 0; updateCost(); applyCostVisibility();
+  clearAttachments();
   setChatBusy(false);
   const s = sessions.find((x) => x.name === name && x.kind === 'ui');
   chatModel = (s && s.model) || 'opus';
@@ -867,12 +878,73 @@ function autoGrow(ta) {
 
 function chatSend() {
   const ta = $('chat-input');
-  const text = ta.value.trim();
-  if (!text) return;
+  let text = ta.value.trim();
+  if (!text && !chatAttachments.length) return;
   if (!chatWs || chatWs.readyState !== WebSocket.OPEN) { flash('Reconnecting — try again'); return; }
+  if (chatAttachments.length) {
+    const refs = chatAttachments.map((a) => a.path).join('\n');
+    text = (text ? text + '\n\n' : '') + 'Attached image(s):\n' + refs;
+  }
   chatWs.send(JSON.stringify({ type: 'send', text }));
-  ta.value = ''; autoGrow(ta); hideMentions();
+  ta.value = ''; autoGrow(ta); hideMentions(); clearAttachments();
   scrollChatBottom();
+}
+
+/* --- image attachments (paste / drop / attach) --- */
+
+let chatAttachments = [];  // { path, url }
+
+function clearAttachments() {
+  for (const a of chatAttachments) { try { URL.revokeObjectURL(a.url); } catch { /* */ } }
+  chatAttachments = [];
+  renderAttachments();
+}
+
+function renderAttachments() {
+  const box = $('chat-attachments');
+  box.textContent = '';
+  box.hidden = !chatAttachments.length;
+  chatAttachments.forEach((a, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'attach-chip';
+    const img = document.createElement('img');
+    img.src = a.url;
+    chip.appendChild(img);
+    const rm = document.createElement('button');
+    rm.className = 'attach-rm'; rm.textContent = '×'; rm.title = 'Remove';
+    rm.addEventListener('click', () => removeAttachment(i));
+    chip.appendChild(rm);
+    box.appendChild(chip);
+  });
+}
+
+function removeAttachment(i) {
+  const a = chatAttachments[i];
+  if (a) { try { URL.revokeObjectURL(a.url); } catch { /* */ } }
+  chatAttachments.splice(i, 1);
+  renderAttachments();
+}
+
+async function addAttachment(blob) {
+  if (!chatSession || !blob || !/^image\//.test(blob.type)) return;
+  const url = URL.createObjectURL(blob);
+  try {
+    const fd = new FormData();
+    fd.append('file', blob, blob.name || 'paste.png');
+    const r = await fetch(`/api/ui/paste?session=${encodeURIComponent(chatSession)}`,
+      { method: 'POST', body: fd });
+    if (!r.ok) {
+      let d = `${r.status}`;
+      try { d = (await r.json()).detail || d; } catch { /* */ }
+      throw new Error(d);
+    }
+    const { path } = await r.json();
+    chatAttachments.push({ path, url });
+    renderAttachments();
+  } catch (e) {
+    try { URL.revokeObjectURL(url); } catch { /* */ }
+    flash('Image upload failed: ' + e.message);
+  }
 }
 
 function chatStop() {
@@ -986,6 +1058,32 @@ $('chat-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSend(); }
   else if (e.key === 'Escape') { e.preventDefault(); chatStop(); }
 });
+$('chat-attach').addEventListener('click', () => $('chat-file').click());
+$('chat-file').addEventListener('change', (e) => {
+  for (const f of e.target.files) addAttachment(f);
+  e.target.value = '';
+});
+$('chat-input').addEventListener('paste', (e) => {
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  let had = false;
+  for (const it of items) {
+    if (it.kind === 'file' && it.type.startsWith('image/')) {
+      const blob = it.getAsFile();
+      if (blob) { had = true; addAttachment(blob); }
+    }
+  }
+  if (had) e.preventDefault();  // don't also dump binary into the textarea
+});
+(() => {
+  const chat = $('chat');
+  chat.addEventListener('dragover', (e) => { e.preventDefault(); chat.classList.add('dragging'); });
+  chat.addEventListener('dragleave', (e) => { if (e.target === chat) chat.classList.remove('dragging'); });
+  chat.addEventListener('drop', (e) => {
+    e.preventDefault(); chat.classList.remove('dragging');
+    const files = (e.dataTransfer && e.dataTransfer.files) || [];
+    for (const f of files) addAttachment(f);
+  });
+})();
 setupRecognition();
 
 /* ---------- Claude connection ---------- */

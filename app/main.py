@@ -13,6 +13,7 @@ import asyncio
 import getpass
 import json
 import os
+import secrets
 import socket
 import subprocess
 import threading
@@ -21,7 +22,9 @@ from pathlib import Path
 
 import httpx
 import websockets
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect,
+)
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -243,6 +246,33 @@ def ui_files(session: str, q: str = ""):
                 if len(out) >= 40:
                     return {"files": sorted(out)}
     return {"files": sorted(out)}
+
+
+_IMG_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+MAX_PASTE_BYTES = 12 * 1024 * 1024
+PASTE_SUBDIR = ".agentpeek/pastes"
+
+
+@app.post("/api/ui/paste")
+async def ui_paste(session: str, file: UploadFile = File(...)):
+    """Save a pasted/dropped image under the UI session's working dir so the
+    agent can read it (via its Read tool). Returns the relative path."""
+    meta = ui_agent.manager.registry.get(session)
+    if not meta:
+        raise HTTPException(404, "No such UI session.")
+    ext = _IMG_EXT.get((file.content_type or "").lower())
+    if not ext:
+        raise HTTPException(422, "Only PNG, JPEG, GIF or WebP images are supported.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(422, "Empty image.")
+    if len(data) > MAX_PASTE_BYTES:
+        raise HTTPException(413, f"Image exceeds {MAX_PASTE_BYTES // (1024 * 1024)}MB.")
+    base = Path(meta["cwd"]) / PASTE_SUBDIR
+    base.mkdir(parents=True, exist_ok=True)
+    name = f"paste-{secrets.token_hex(4)}{ext}"
+    (base / name).write_bytes(data)
+    return {"path": f"{PASTE_SUBDIR}/{name}"}
 
 
 @app.patch("/api/sessions/{name}")

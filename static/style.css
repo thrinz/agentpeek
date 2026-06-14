@@ -591,3 +591,32 @@ dialog menu button {
   color: var(--accent); border: 1px solid var(--border); border-radius: 4px;
   padding: 0 4px; margin-left: 2px;
 }
+
+/* ---------- chat image attachments ---------- */
+
+#chat-attachments {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 8px 12px 0;
+}
+.attach-chip {
+  position: relative; width: 52px; height: 52px;
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  background: var(--bg-side);
+}
+.attach-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach-rm {
+  position: absolute; top: -6px; right: -6px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--danger); color: #fff; border: 2px solid var(--bg);
+  font-size: 12px; line-height: 1; cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+#chat-attach { font-size: 15px; align-self: center; }
+#chat.dragging::after {
+  content: 'Drop image to attach';
+  position: absolute; inset: 8px; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--accent); border-radius: 12px;
+  background: rgba(96,165,250,.08); color: var(--accent);
+  font-size: 15px; pointer-events: none;
+}
