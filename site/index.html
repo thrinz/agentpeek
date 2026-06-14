@@ -250,14 +250,15 @@
   </section>
 
   <h2>Quick start</h2>
-  <pre><code>git clone https://github.com/thrinz/agentpeek &amp;&amp; cd agentpeek
+  <pre><code>cd ~ &amp;&amp; git clone https://github.com/thrinz/agentpeek.git &amp;&amp; cd agentpeek
 ./setup.sh
 # reach it on your tailnet (HTTPS, tailnet-only):
 tailscale serve --bg --https=9443 http://127.0.0.1:8090</code></pre>
   <p>Open <code>http://localhost:8090</code> — on WSL2 that works straight from your Windows browser.
-     On Debian/Ubuntu, <code>setup.sh</code> installs the prerequisites for you (tmux, ttyd, a Python
-     venv) and the systemd services. You'll need <strong>systemd enabled</strong> on WSL2 and the
-     <code>claude</code> CLI for UI mode — see the
+     On Debian/Ubuntu, <code>setup.sh</code> installs everything for you — tmux, ttyd, <strong>Claude
+     Code</strong>, a Python venv and the systemd services — and offers to install Tailscale. You'll
+     need <strong>systemd enabled</strong> on WSL2, and the repo on the Linux filesystem (not a
+     <code>/mnt/c</code> Windows drive) — see the
      <a href="https://github.com/thrinz/agentpeek#prerequisites">full prerequisites</a>.</p>
 
   <h2>Frequently asked questions</h2>
