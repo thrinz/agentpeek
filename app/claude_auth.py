@@ -184,12 +184,14 @@ def start_login() -> str:
         )
         os.close(slave)
         flow = _Flow(proc, master)
-        text = flow.read_until(
-            lambda t: bool(_URL_RE.search(t)) and "aste code" in t,
-            timeout=40,
-        )
+
+        def _has_full_url(t):
+            mm = _URL_RE.search(t)
+            return bool(mm) and "state=" in mm.group(0)  # the last query param
+
+        text = flow.read_until(_has_full_url, timeout=40)
         m = _URL_RE.search(text)
-        if not m:
+        if not (m and "state=" in m.group(0)):
             _kill(flow)
             raise RuntimeError(
                 "Timed out waiting for the Claude sign-in URL. " + _tail(text))
