@@ -17,6 +17,7 @@ environment so UI-mode agents spawned now pick it up without a restart.
 """
 
 import fcntl
+import json
 import os
 import pty
 import re
@@ -31,7 +32,6 @@ from pathlib import Path
 
 from fastapi import Body, HTTPException
 
-CLAUDE_CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
 CONFIG_DIR = Path.home() / ".config" / "agentpeek"
 ENV_FILE = CONFIG_DIR / "agentpeek.env"
 
@@ -85,6 +85,30 @@ def _debug_dump(text: str) -> None:
 
 # --- status --------------------------------------------------------------
 
+_login_cache = {"ts": 0.0, "val": False}
+_LOGIN_TTL = 20  # seconds — `claude auth status` spawns the CLI, so don't poll it hot
+
+
+def _cli_logged_in() -> bool:
+    """Ask the CLI whether it's actually signed in (cheap-cached). This is the
+    truth UI-mode agents rely on — far better than 'a credentials file exists',
+    which stays True after a token expires or a half-finished login."""
+    now = time.time()
+    if now - _login_cache["ts"] < _LOGIN_TTL:
+        return _login_cache["val"]
+    val = False
+    try:
+        out = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=10,
+        )
+        val = bool(json.loads(out.stdout or "{}").get("loggedIn"))
+    except Exception:
+        val = False
+    _login_cache.update(ts=now, val=val)
+    return val
+
+
 def claude_status() -> dict:
     """Whether UI-mode agents can authenticate to Claude right now."""
     b = backend()
@@ -106,9 +130,9 @@ def claude_status() -> dict:
     if os.environ.get("AGENTPEEK_FORCE_CLAUDE_LOGIN"):
         return {"connected": False, "method": None,
                 "detail": "Test mode — sign in to Claude below."}
-    if CLAUDE_CREDENTIALS.exists():
+    if _cli_logged_in():
         return {"connected": True, "method": "subscription",
-                "detail": "Connected via the host's existing Claude login."}
+                "detail": "Connected via the host's Claude login."}
     return {"connected": False, "method": None,
             "detail": "Not connected. Sign in to Claude, or add an API key."}
 

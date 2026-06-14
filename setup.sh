@@ -132,6 +132,23 @@ if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
   fi
   echo "    running as root: set IS_SANDBOX=1 so Claude allows skip-permissions (UI mode + cds)."
 fi
+# One-time Claude sign-in so UI/chat mode and cds work without a separate login.
+# `claude auth status` is JSON (loggedIn:true/false); `claude auth login` is the
+# interactive OAuth — it prints a URL, you approve in the browser and paste the
+# code back here (paste works in this terminal, unlike the in-browser one). It
+# persists credentials to ~/.claude, which both the SDK and cds read.
+if command -v claude >/dev/null 2>&1; then
+  if claude auth status 2>/dev/null | grep -q '"loggedIn": *true'; then
+    echo "    Claude: already signed in."
+  elif [[ -t 0 ]]; then
+    read -rp "Sign in to Claude now? (needed for UI/chat mode) [Y/n] " ans
+    if [[ ! "$ans" =~ ^[Nn] ]]; then
+      claude auth login || echo "    sign-in didn't finish — run 'claude auth login' later."
+    fi
+  else
+    echo "    Claude: not signed in — run 'claude auth login' once (UI/chat mode needs it)."
+  fi
+fi
 
 echo "==> 3/6 python venv"
 if [[ ! -x "$REPO/.venv/bin/pip" ]]; then
