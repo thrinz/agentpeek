@@ -41,9 +41,14 @@ TTYD_HTTP = f"http://127.0.0.1:{TTYD_PORT}"
 TTYD_WS = f"ws://127.0.0.1:{TTYD_PORT}"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
-# Root of the working-directory picker in the create dialog.
+# Root of the working-directory picker in the create dialog. Created on startup
+# so a fresh install can always browse it (and create folders under it).
 DIRS_ROOT = Path.home() / "projects"
+DIRS_ROOT.mkdir(parents=True, exist_ok=True)
 SKIP_DIRS = {"node_modules", "__pycache__"}
+# Working-directory folder names: a single path segment, conservative charset.
+_DIR_NAME_OK = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
 # Sidebar folders are user-defined (max two levels, "Parent/Child"), persisted
 # as a JSON list of paths. General always exists as the catch-all for sessions
@@ -224,6 +229,31 @@ def list_dirs(path: str = ""):
     except PermissionError:
         dirs = []
     return {"path": path, "dirs": dirs}
+
+
+class DirBody(BaseModel):
+    path: str
+
+
+@app.post("/api/dirs", status_code=201)
+def create_dir(body: DirBody):
+    """Create a new working directory under the projects root. `path` is a
+    relative path; each segment must be a safe name (no dots/slashes/'..')."""
+    rel = body.path.strip().strip("/")
+    segs = rel.split("/") if rel else []
+    if not segs or not all(s and set(s) <= _DIR_NAME_OK for s in segs):
+        raise HTTPException(
+            422, "Folder names may use letters, digits, '-' and '_' only.")
+    target = (DIRS_ROOT / rel).resolve()
+    if not target.is_relative_to(DIRS_ROOT):
+        raise HTTPException(422, "Directory must be inside the projects root.")
+    if target.exists():
+        raise HTTPException(409, f"'{rel}' already exists.")
+    parent = target.parent
+    if not parent.is_dir():
+        raise HTTPException(404, f"Parent directory does not exist: {parent.name}")
+    target.mkdir()
+    return {"path": rel}
 
 
 _FILE_SKIP_DIRS = {"node_modules", "__pycache__", ".git", ".venv", "dist", ".next", "build"}

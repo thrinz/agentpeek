@@ -46,6 +46,7 @@ const api = {
   host: () => req('GET', '/api/host'),
   config: () => req('GET', '/api/config'),
   dirs: (path) => req('GET', `/api/dirs?path=${encodeURIComponent(path)}`),
+  mkdir: (path) => req('POST', '/api/dirs', { path }),
   createFolder: (path) => req('POST', '/api/folders', { path }),
   deleteFolder: (path) => req('DELETE', `/api/folders/${encodeURIComponent(path)}`),
   claudeStatus: () => req('GET', '/api/claude/status'),
@@ -208,25 +209,42 @@ function dirNode(label, rel, selectable = true) {
   children.className = 'dir-children';
   children.hidden = true;
   let loaded = false;
+  let childRefs = new Map();   // label -> dirNode ref, for programmatic expansion
+
+  // Load this node's children once (resets the 'leaf' marker if reloaded).
+  async function load() {
+    if (loaded) return childRefs;
+    loaded = true;
+    try {
+      const { dirs } = await api.dirs(rel);
+      if (!dirs.length) {
+        twisty.classList.add('leaf');
+        twisty.textContent = '·';
+        return childRefs;
+      }
+      for (const d of dirs) {
+        const child = dirNode(d, rel ? `${rel}/${d}` : d);
+        childRefs.set(d, child);
+        children.appendChild(child.node);
+      }
+    } catch {
+      loaded = false;
+    }
+    return childRefs;
+  }
+
+  // Ensure loaded + visible (not a toggle); returns child refs for descent.
+  async function open() {
+    const refs = await load();
+    if (!twisty.classList.contains('leaf')) {
+      children.hidden = false;
+      twisty.classList.add('open');
+    }
+    return refs;
+  }
 
   twisty.addEventListener('click', async () => {
-    if (!loaded) {
-      loaded = true;
-      try {
-        const { dirs } = await api.dirs(rel);
-        if (!dirs.length) {
-          twisty.classList.add('leaf');
-          twisty.textContent = '·';
-          return;
-        }
-        for (const d of dirs) {
-          children.appendChild(dirNode(d, rel ? `${rel}/${d}` : d).node);
-        }
-      } catch {
-        loaded = false;
-        return;
-      }
-    }
+    await load();
     if (twisty.classList.contains('leaf')) return;
     children.hidden = !children.hidden;
     twisty.classList.toggle('open', !children.hidden);
@@ -236,7 +254,63 @@ function dirNode(label, rel, selectable = true) {
   row.appendChild(name);
   node.appendChild(row);
   node.appendChild(children);
-  return { node, twisty, name };
+  return { node, twisty, name, open };
+}
+
+// The create dialog's directory tree root (kept so "New folder" can re-expand it).
+let cTreeRoot = null;
+
+// Build the tree rooted at projects/, expanded one level. If `selectRel` is given,
+// expand down to it and select it (used right after creating a folder).
+async function buildDirTree(selectRel = null) {
+  const tree = $('c-dirtree');
+  tree.textContent = '';
+  cTreeRoot = dirNode(config.root, '', false);
+  tree.appendChild(cTreeRoot.node);
+  await cTreeRoot.open();
+  if (selectRel) {
+    await expandAndSelect(selectRel);
+  } else {
+    cstate.cwd = null;
+    $('c-path').textContent = 'choose a directory…';
+  }
+}
+
+// Walk the tree from the root, expanding each ancestor, then select the leaf.
+async function expandAndSelect(rel) {
+  const parts = rel.split('/');
+  let node = cTreeRoot, acc = '';
+  for (const part of parts) {
+    const refs = await node.open();
+    node = refs.get(part);
+    if (!node) return;   // not found (shouldn't happen right after a create)
+    acc = acc ? `${acc}/${part}` : part;
+  }
+  setCwd(acc, node.name);
+}
+
+// Prompt for a name and create a folder under the current selection (or the
+// projects root), then re-expand the tree to it and select it.
+async function newDir() {
+  const parent = cstate.cwd || '';
+  const where = parent ? `${config.root}/${parent}` : config.root;
+  const raw = await ask({
+    title: 'New folder', msg: `Create a folder inside ${where}`,
+    input: '', okLabel: 'Create',
+  });
+  if (raw === null) return;
+  if (!NAME_RE.test(raw)) {
+    await ask({ title: 'New folder', msg: NAME_HINT });
+    return;
+  }
+  const rel = parent ? `${parent}/${raw}` : raw;
+  try {
+    await api.mkdir(rel);
+  } catch (e) {
+    await ask({ title: 'Could not create folder', msg: e.message });
+    return;
+  }
+  await buildDirTree(rel);
 }
 
 function openCreateDialog() {
@@ -260,12 +334,7 @@ function openCreateDialog() {
   $('c-start-field').hidden = cstate.type === 'ui';
 
   // fresh tree rooted at projects/, expanded one level, nothing preselected
-  const tree = $('c-dirtree');
-  tree.textContent = '';
-  const root = dirNode(config.root, '', false);
-  tree.appendChild(root.node);
-  $('c-path').textContent = 'choose a directory…';
-  root.twisty.click();
+  buildDirTree();
 
   $('cdlg').showModal();
   $('c-name').focus();
@@ -1240,6 +1309,7 @@ $('create-btn').addEventListener('click', openCreateDialog);
 $('add-folder-btn').addEventListener('click', () => addFolder(null));
 $('c-ok').addEventListener('click', submitCreate);
 $('c-cancel').addEventListener('click', () => $('cdlg').close());
+$('c-newdir').addEventListener('click', newDir);
 $('c-name').addEventListener('input', () => clearFieldError($('c-name')));
 $('c-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); submitCreate(); }
