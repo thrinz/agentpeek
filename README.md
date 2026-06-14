@@ -130,9 +130,15 @@ terminal) or *UI* (a Claude chat — see [UI mode](#ui-mode--claude-chat)) — a
 (`DIRS_ROOT` in `app/main.py`), and for Shell type a **start option** (*AI* types
 your launcher command into the new shell, or plain *Shell*).
 
-> **AI start option** types `cds` into the new shell — that's the author's
-> personal Claude Code launcher alias. Change the command in `mux.create()`
-> (`app/multiplexer.py`) to whatever starts your agent (`claude`, `aider`, …).
+> **AI start option** types `cds` into the new shell. `setup.sh` installs `cds`
+> to `~/.local/bin` as `claude --dangerously-skip-permissions` (edit that file,
+> or the `send-keys` command in `app/multiplexer.py`, to launch a different agent
+> like `aider`). It won't overwrite an existing `cds`, so your customisation sticks.
+
+> **Running as root?** Claude Code refuses to skip permissions as root, so UI mode
+> and `cds` fail with exit 1. `setup.sh` detects root and sets `IS_SANDBOX=1` in
+> the env file (and `cds` sets it too) to allow it — this lets the agent act as
+> root without per-tool prompts, so prefer running agentpeek as a normal user.
 
 ## UI mode — Claude chat
 

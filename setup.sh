@@ -13,6 +13,20 @@ export PATH="$HOME/.local/bin:$PATH"
 PORT="${AGENTPEEK_PORT:-8090}"
 TTYD_PORT="${AGENTPEEK_TTYD_PORT:-7681}"
 
+ENV_FILE="$HOME/.config/agentpeek/agentpeek.env"
+
+# Upsert KEY=VALUE in the env file without a shell parsing the value (the password
+# hash contains '$'). Replaces an existing KEY= line, else appends.
+set_env_kv() {
+  local key="$1" val="$2"
+  mkdir -p "$(dirname "$ENV_FILE")"; chmod 700 "$(dirname "$ENV_FILE")"
+  touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
+  local tmp; tmp="$(mktemp)"
+  grep -v "^${key}=" "$ENV_FILE" > "$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "$key" "$val" >> "$tmp"
+  mv "$tmp" "$ENV_FILE"; chmod 600 "$ENV_FILE"
+}
+
 # Refuse to run from a Windows drive (/mnt/c, …). DrvFs is slow, has no real Unix
 # permissions/ownership, and breaks the venv, chmod, and systemd units that bake in
 # @REPO@ paths. Set AGENTPEEK_ALLOW_MNT=1 to override (not recommended).
@@ -97,6 +111,27 @@ else
   echo "    !! claude install did not complete — UI mode and the 'claude' launcher" >&2
   echo "       won't work until it's installed (see https://docs.claude.com/claude-code)." >&2
 fi
+# Install the 'cds' launcher the AI start option types into a new shell. Don't
+# clobber an existing one — the user may have customized which agent it runs.
+mkdir -p "$HOME/.local/bin"
+if [[ ! -e "$HOME/.local/bin/cds" ]]; then
+  install -m 755 "$REPO/bin/cds" "$HOME/.local/bin/cds"
+  echo "    cds: $HOME/.local/bin/cds (claude --dangerously-skip-permissions)"
+else
+  echo "    cds: $HOME/.local/bin/cds (kept existing)"
+fi
+
+# Claude Code refuses to skip permissions as root unless IS_SANDBOX is set. UI
+# (chat) mode runs the agent with bypassPermissions, so without this it errors
+# with exit 1 when agentpeek runs as root. Put it in the env file the service
+# reads. NOTE: this lets the agent act as root without per-tool prompts — fine
+# on a throwaway/root-only box, but prefer running agentpeek as a normal user.
+if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+  if ! grep -q '^IS_SANDBOX=' "$ENV_FILE" 2>/dev/null; then
+    set_env_kv IS_SANDBOX 1
+  fi
+  echo "    running as root: set IS_SANDBOX=1 so Claude allows skip-permissions (UI mode + cds)."
+fi
 
 echo "==> 3/6 python venv"
 if [[ ! -x "$REPO/.venv/bin/pip" ]]; then
@@ -150,20 +185,6 @@ echo "==> 6/6 linger (start services at WSL2 boot, without a login)"
 if ! loginctl enable-linger "$USER" 2>/dev/null; then
   echo "    !! could not enable linger; run manually: sudo loginctl enable-linger $USER"
 fi
-
-ENV_FILE="$HOME/.config/agentpeek/agentpeek.env"
-
-# Upsert KEY=VALUE in the env file without a shell parsing the value (the hash
-# contains '$'). Replaces an existing KEY= line, else appends.
-set_env_kv() {
-  local key="$1" val="$2"
-  mkdir -p "$(dirname "$ENV_FILE")"; chmod 700 "$(dirname "$ENV_FILE")"
-  touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
-  local tmp; tmp="$(mktemp)"
-  grep -v "^${key}=" "$ENV_FILE" > "$tmp" 2>/dev/null || true
-  printf '%s=%s\n' "$key" "$val" >> "$tmp"
-  mv "$tmp" "$ENV_FILE"; chmod 600 "$ENV_FILE"
-}
 
 # === login password ========================================================
 # agentpeek is open by default on localhost/tailnet. Offer to set a login now.

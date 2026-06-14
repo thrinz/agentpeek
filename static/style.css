@@ -54,8 +54,10 @@ body {
 body.collapsed { grid-template-columns: 1fr; }
 body.collapsed #sidebar { display: none; }
 
-#sidebar-top { display: flex; gap: 6px; }
-#sidebar-top #create-btn { flex: 1; }
+/* Create button on its own full-width row; the small tool buttons wrap below it,
+   so a narrow sidebar never splits "Create Session" across two lines. */
+#sidebar-top { display: flex; flex-wrap: wrap; gap: 6px; }
+#sidebar-top #create-btn { flex: 1 1 100%; white-space: nowrap; }
 
 #add-folder-btn, #theme-toggle {
   background: var(--bg-hover);

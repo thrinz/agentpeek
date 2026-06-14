@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# agentpeek's default "AI" session launcher: Claude Code with the per-tool
+# permission prompts skipped (handy for an agent you're driving from a browser).
+# setup.sh installs this to ~/.local/bin/cds. To launch a different agent, edit
+# this file (or change the send-keys command in app/multiplexer.py).
+#
+# Claude refuses --dangerously-skip-permissions as root unless IS_SANDBOX is set,
+# so opt in when we're root (e.g. a root-only WSL distro). Harmless for non-root.
+[[ ${EUID:-$(id -u)} -eq 0 ]] && export IS_SANDBOX=1
+exec claude --dangerously-skip-permissions "$@"
