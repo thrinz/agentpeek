@@ -116,7 +116,8 @@ class CreateBody(BaseModel):
 
 
 class RenameBody(BaseModel):
-    new_name: str
+    new_name: str | None = None
+    group: str | None = None
 
 
 def _call(fn, *args):
@@ -309,7 +310,20 @@ async def ui_paste(session: str, file: UploadFile = File(...)):
 
 
 @app.patch("/api/sessions/{name}")
-def rename_session(name: str, body: RenameBody):
+def update_session(name: str, body: RenameBody):
+    # Move to a different sidebar folder.
+    if body.group is not None:
+        group = body.group.strip().strip("/")
+        if group not in _load_folders():
+            raise HTTPException(422, f"Unknown folder '{group}'.")
+        if ui_agent.manager.exists(name):
+            ui_agent.manager.set_group(name, group)
+        else:
+            _call(mux.set_group, name, group)
+        return {"name": name, "group": group}
+    # Rename.
+    if body.new_name is None:
+        raise HTTPException(422, "Provide new_name or group.")
     new = body.new_name.strip()
     if ui_agent.manager.exists(name):
         _call(mux.validate_name, new)

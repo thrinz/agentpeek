@@ -122,6 +122,13 @@ def rename(old: str, new: str) -> None:
     _tmux("rename-session", "-t", f"={old}", new)
 
 
+def set_group(name: str, group: str) -> None:
+    """Move a session to a different sidebar folder."""
+    if not has(name):
+        raise NoSuchSession(f"No session named '{name}'.")
+    _tmux("set-option", "-t", f"={name}:", "@agentpeek_group", group)
+
+
 def kill(name: str) -> None:
     if not has(name):
         raise NoSuchSession(f"No session named '{name}'.")

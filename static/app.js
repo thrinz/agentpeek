@@ -42,6 +42,8 @@ const api = {
   create: (body) => req('POST', '/api/sessions', body),
   rename: (name, newName) =>
     req('PATCH', `/api/sessions/${encodeURIComponent(name)}`, { new_name: newName }),
+  move: (name, group) =>
+    req('PATCH', `/api/sessions/${encodeURIComponent(name)}`, { group }),
   kill: (name) => req('DELETE', `/api/sessions/${encodeURIComponent(name)}`),
   host: () => req('GET', '/api/host'),
   config: () => req('GET', '/api/config'),
@@ -429,12 +431,19 @@ function showView(kind) {
   main.classList.toggle('chatting', kind === 'ui');
 }
 
+const PASTE_HINT_KEY = 'agentpeek-paste-hint-off';
+
+function showPasteHint(on) {
+  $('term-hint').hidden = !on || localStorage.getItem(PASTE_HINT_KEY) === '1';
+}
+
 function attach(name) {
   if (active === name && activeKind === 'shell') return;
   closeChat();
   active = name; activeKind = 'shell';
   $('term').src = `/term/?arg=${encodeURIComponent(name)}`;
   showView('shell');
+  showPasteHint(true);
   render();
 }
 
@@ -443,6 +452,7 @@ function detach() {
   active = null; activeKind = null;
   $('term').src = 'about:blank';
   showView(null);
+  showPasteHint(false);
   render();
 }
 
@@ -596,12 +606,32 @@ function showMenu(items, anchor) {
 
 function openSessionMenu(s, anchor) {
   const items = [['Rename…', () => renameSession(s), '']];
+  if (config.folders.length > 1) {
+    items.push(['Move to folder…', () => moveSession(s, anchor), '']);
+  }
   if (s.kind !== 'ui') {
     items.push(['Copy SSH attach command', () => copyText(sshAttachCommand(s.name)), '']);
     items.push(['Copy local attach command', () => copyText(s.attach_command), '']);
   }
   items.push(['Terminate…', () => killSession(s), 'danger']);
   showMenu(items, anchor);
+}
+
+// Second-level menu: pick a destination folder for the session.
+function moveSession(s, anchor) {
+  const targets = config.folders.filter((f) => f !== s.group);
+  if (!targets.length) { flash('No other folder to move to.'); return; }
+  showMenu(targets.map((f) => [f.replaceAll('/', ' / '),
+    () => doMove(s, f), '']), anchor);
+}
+
+async function doMove(s, group) {
+  try {
+    await api.move(s.name, group);
+    await refresh();
+  } catch (e) {
+    flash(e.message || 'Could not move the session.');
+  }
 }
 
 function openFolderMenu(path, anchor) {
@@ -927,6 +957,7 @@ function openChat(name) {
   closeChat();
   active = name; activeKind = 'ui'; chatSession = name;
   showView('ui');
+  showPasteHint(false);
   $('chat-title').textContent = name;
   $('chat-log').textContent = '';
   chatTotalCost = 0; updateCost(); applyCostVisibility();
@@ -1310,6 +1341,10 @@ $('add-folder-btn').addEventListener('click', () => addFolder(null));
 $('c-ok').addEventListener('click', submitCreate);
 $('c-cancel').addEventListener('click', () => $('cdlg').close());
 $('c-newdir').addEventListener('click', newDir);
+$('term-hint-x').addEventListener('click', () => {
+  localStorage.setItem(PASTE_HINT_KEY, '1');
+  $('term-hint').hidden = true;
+});
 $('c-name').addEventListener('input', () => clearFieldError($('c-name')));
 $('c-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); submitCreate(); }

@@ -381,6 +381,15 @@ class UIManager:
                         and now - r.last_active > IDLE_SECONDS):
                     await r.suspend()
 
+    def set_group(self, name, group):
+        if name not in self.registry:
+            return
+        self.registry[name]["group"] = group
+        r = self.runners.get(name)
+        if r:
+            r.group = group
+        self._persist_registry()
+
     def rename(self, old, new):
         if old not in self.registry:
             return

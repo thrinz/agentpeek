@@ -241,6 +241,42 @@ body.collapsed #expand-btn { display: block; }
 
 #main { position: relative; }
 
+/* Unobtrusive "how to paste" hint over the terminal; dismissible (remembered). */
+#term-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  background: var(--card, var(--bg-side));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  opacity: 0.85;
+}
+#term-hint kbd {
+  font: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+#term-hint button {
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+#term-hint button:hover { color: var(--fg); }
+
 #empty {
   position: absolute;
   inset: 0;
