@@ -20,6 +20,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    CLINotFoundError,
     ResultMessage,
     StreamEvent,
     SystemMessage,
@@ -114,8 +115,28 @@ class AgentRunner:
     async def _run(self):
         try:
             await self._ensure_client()
+        except CLINotFoundError:
+            await self._emit({"role": "error", "text":
+                "Claude Code (the 'claude' CLI) isn't installed on the host, so UI "
+                "mode can't start. Install it (see the Claude Code docs) and retry."})
+            await self._status()
+            return
         except Exception as e:  # connection / auth failure
-            await self._emit({"role": "error", "text": f"Could not start the agent: {e}"})
+            # The chip can read "connected" just because a credentials file exists,
+            # yet the real `claude` start can still fail (expired token, not logged
+            # in, root without IS_SANDBOX). Surface the actual reason + how to fix.
+            stderr = (getattr(e, "stderr", "") or "").strip()
+            exit_code = getattr(e, "exit_code", None)
+            msg = ("Couldn't start Claude — you may need to sign in. Open the "
+                   "Claude connection (the chip at the bottom of the sidebar) and "
+                   "sign in, or run 'claude' once in a terminal to log in.")
+            details = "; ".join(p for p in [
+                f"claude exited {exit_code}" if exit_code is not None else "",
+                stderr,
+            ] if p)
+            if details:
+                msg += f"\n\nDetails: {details}"
+            await self._emit({"role": "error", "text": msg})
             await self._status()
             return
         while True:
