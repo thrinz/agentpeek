@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
-<title>agentpeek — Run Your AI Agents From the Browser | Claude Code session manager</title>
-<meta name="description" content="agentpeek is a free, self-hosted control panel for the Claude Code agents on your Linux or WSL2 box. Run persistent sessions as a browser terminal or a streaming chat, reach them from anywhere over Tailscale, and leave them running when you disconnect.">
+<title>agentpeek — Persistent Claude Code Sessions in Any Browser</title>
+<meta name="description" content="agentpeek is a free, self-hosted browser control panel for Claude Code. Start a session, close your laptop, and pick it up from your phone — it keeps working when you disconnect. Drive it as a terminal or a chat, reachable anywhere over Tailscale.">
 <link rel="canonical" href="https://agentpeek.dev/">
 <link rel="icon" type="image/svg+xml" href="logo.svg">
 
 <!-- Open Graph / social previews -->
 <meta property="og:type" content="website">
-<meta property="og:title" content="agentpeek — Run Your AI Agents From the Browser">
-<meta property="og:description" content="Self-hosted control panel for the Claude Code agents on your box: persistent terminal sessions and a streaming Claude chat, reachable from any browser over your tailnet. They keep running when you disconnect.">
+<meta property="og:title" content="agentpeek — Persistent Claude Code Sessions in Any Browser">
+<meta property="og:description" content="The browser control panel for Claude Code: persistent sessions you drive as a terminal or a chat, reachable from any device over your tailnet. They keep working when you close the laptop.">
 <meta property="og:url" content="https://agentpeek.dev/">
 <meta property="og:site_name" content="agentpeek">
 <meta property="og:image" content="https://agentpeek.dev/img/chat.png">
@@ -20,8 +20,8 @@
 <meta property="og:image:height" content="1720">
 <meta property="og:image:alt" content="agentpeek UI mode — a streaming Claude chat rendering Markdown and a table, with nested session folders in the sidebar">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="agentpeek — Run Your AI Agents From the Browser">
-<meta name="twitter:description" content="Persistent Claude Code sessions as a browser terminal or streaming chat, reachable anywhere over Tailscale. Self-hosted, MIT.">
+<meta name="twitter:title" content="agentpeek — Persistent Claude Code Sessions in Any Browser">
+<meta name="twitter:description" content="The browser control panel for Claude Code: persistent sessions as a terminal or chat, reachable anywhere over Tailscale. They keep working when you close the laptop. Self-hosted, MIT.">
 <meta name="twitter:image" content="https://agentpeek.dev/img/chat.png">
 
 <script type="application/ld+json">
@@ -31,7 +31,7 @@
   "name": "agentpeek",
   "operatingSystem": "Linux, Windows (WSL2)",
   "applicationCategory": "DeveloperApplication",
-  "description": "A self-hosted, browser-based control panel for AI coding agents. Run persistent Claude Code sessions as a terminal or a streaming chat (Claude Agent SDK), with Markdown/table rendering, inline tool activity, @-mention, image paste, voice, and a model picker. Reachable from any browser over a Tailscale tailnet.",
+  "description": "A self-hosted browser control panel for Claude Code: persistent sessions you drive as a terminal or a streaming chat (Claude Agent SDK), with Markdown/table rendering, inline tool activity, @-mention, image paste, voice, and a model picker. Reachable from any browser over a Tailscale tailnet; sessions keep working when you disconnect.",
   "url": "https://agentpeek.dev/",
   "downloadUrl": "https://github.com/thrinz/agentpeek",
   "softwareRequirements": "Python 3.10+, tmux, the claude CLI",
@@ -130,6 +130,18 @@
   .two .card ul { margin: .5rem 0 0; padding-left: 1.1rem; color: var(--dim); font-size: .95rem; }
   .two .card li { margin: .2rem 0; }
 
+  .pain { margin: 1rem 0 1.5rem; }
+  .pain p { margin: .35rem 0; font-size: 1.12rem; line-height: 1.7; color: var(--dim); }
+  .pain .punch { color: var(--fg); font-size: 1.2rem; margin-top: 1rem; }
+  .pain .punch strong { color: var(--accent); }
+
+  table.compare { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .97rem; }
+  table.compare th, table.compare td { padding: .65rem .8rem; border-bottom: 1px solid var(--border); text-align: left; }
+  table.compare thead th { color: var(--dim); font-weight: 600; }
+  table.compare thead th:last-child { color: var(--accent); }
+  table.compare td:first-child, table.compare td:nth-child(2) { color: var(--dim); }
+  table.compare td:last-child { color: var(--fg); font-weight: 600; }
+
   .companion { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid var(--border); }
   .companion .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: .75rem;
                         color: var(--accent); font-weight: 700; margin: 0; }
@@ -140,10 +152,10 @@
 
 <header class="hero">
   <img src="logo.svg" alt="agentpeek logo">
-  <h1>Run your AI agents from any browser.<br>Leave them running.</h1>
-  <p class="tagline">agentpeek is a free, self-hosted control panel for the Claude Code agents on your
-     Linux or WSL2 box. Start persistent sessions, drive them as a terminal or a streaming chat, and
-     reach them from any browser over your tailnet — they keep working when you close the laptop.</p>
+  <h1>Persistent Claude Code sessions,<br>in any browser.</h1>
+  <p class="tagline">agentpeek is the free, self-hosted browser control panel for Claude Code. Start a
+     session on your Linux or WSL2 box, drive it as a terminal or a chat, and reach it from any
+     device over your tailnet — <strong>it keeps working when you close the laptop.</strong></p>
   <a class="cta" href="https://github.com/thrinz/agentpeek">Get it on GitHub</a>
   <a class="cta alt" href="https://github.com/thrinz/agentpeek#setup">Quick start</a>
   <p class="badges">
@@ -155,10 +167,15 @@
 </header>
 
 <main>
-  <h2>Built for long-running coding agents</h2>
-  <p>You run Claude Code on a remote or WSL2 box and want to start it, watch it, and steer it without
-     being chained to one SSH terminal. agentpeek puts a browser UI in front of your machine: named
-     sessions you create, switch between, and reach from anywhere — that don't stop when you disconnect.</p>
+  <h2>Why agentpeek exists</h2>
+  <div class="pain">
+    <p>You start Claude Code in a terminal. Then you close your laptop — and the session is gone.</p>
+    <p>So you SSH back in from your phone and fight with <code>tmux</code> on a tiny screen, trying to
+       find the session you lost.</p>
+    <p class="punch">agentpeek turns those sessions into persistent, browser-accessible workspaces.
+       <strong>They keep working when you close the laptop</strong> — open a tab from any device and
+       you're right back in.</p>
+  </div>
 
   <div class="flow">
     <span class="box">Any browser</span>
@@ -167,8 +184,23 @@
     <span class="arrow">→</span>
     <span class="box">tmux + Claude Agent SDK</span>
     <span class="arrow">→</span>
-    <span class="box">your project</span>
+    <span class="box">your project · still running</span>
   </div>
+
+  <h2>Why not just SSH?</h2>
+  <p>SSH and tmux can do this — if you enjoy the fight. agentpeek is that same persistence, with a UI
+     actually built for it.</p>
+  <table class="compare">
+    <thead><tr><th></th><th>SSH + tmux</th><th>agentpeek</th></tr></thead>
+    <tbody>
+      <tr><td>Interface</td><td>Terminal only</td><td>Terminal <em>and</em> a Claude chat</td></tr>
+      <tr><td>On mobile</td><td>Painful</td><td>Built for the browser</td></tr>
+      <tr><td>Find a session</td><td>Remember its name</td><td>Visual session manager</td></tr>
+      <tr><td>Reconnect</td><td>SSH back, re-attach by hand</td><td>Open a browser tab</td></tr>
+      <tr><td>Files &amp; input</td><td>Type paths by hand</td><td>@-mention, image paste, voice</td></tr>
+      <tr><td>Keeps running</td><td>tmux, configured yourself</td><td>Built in — never stops</td></tr>
+    </tbody>
+  </table>
 
   <h2>Two ways to drive an agent</h2>
   <div class="two">
