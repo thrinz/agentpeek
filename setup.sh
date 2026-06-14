@@ -114,9 +114,32 @@ if ! loginctl enable-linger "$USER" 2>/dev/null; then
   echo "    !! could not enable linger; run manually: sudo loginctl enable-linger $USER"
 fi
 
+ENV_FILE="$HOME/.config/agentpeek/agentpeek.env"
+
 echo
-echo "agentpeek is up:  http://127.0.0.1:8090"
-echo "Expose on the tailnet (HTTPS, tailnet-only):"
+echo "============================================================"
+echo " agentpeek is running — open it at:"
+echo
+echo "     http://localhost:8090     (http://127.0.0.1:8090)"
+echo
+echo " It's a systemd user service, so it auto-starts on boot. Manage it with:"
+echo "     systemctl --user status  agentpeek"
+echo "     systemctl --user restart agentpeek"
+echo "     journalctl --user -u agentpeek -f      # live logs"
+echo "============================================================"
+
+echo
+echo "Set a password (recommended before exposing it anywhere)."
+echo "agentpeek is open by default on localhost/tailnet; add a login like this:"
+echo "    \"$REPO/.venv/bin/python\" -m app hash-password   # prints a hash"
+echo "    mkdir -p \"$(dirname "$ENV_FILE")\""
+echo "    echo 'AGENTPEEK_PASSWORD_HASH=<paste-the-hash>' >> \"$ENV_FILE\""
+echo "    echo \"AGENTPEEK_SECRET=\$(openssl rand -hex 32)\" >> \"$ENV_FILE\"   # keeps logins across restarts"
+echo "    systemctl --user restart agentpeek"
+echo "(For scripts/automation you can add AGENTPEEK_TOKEN=<token> and send it as 'Authorization: Bearer'.)"
+
+echo
+echo "Expose on the tailnet (HTTPS, tailnet-only — never the public internet):"
 echo "    tailscale serve --bg --https=9443 http://127.0.0.1:8090"
 
 if command -v claude >/dev/null 2>&1; then
