@@ -64,6 +64,12 @@ def claude_status() -> dict:
     if os.environ.get(_APIKEY):
         return {"connected": True, "method": "api_key",
                 "detail": "Connected with a saved Anthropic API key."}
+    # Test toggle: pretend the host's own login isn't there so the in-app
+    # sign-in flow is the front path. A real saved token/key (checked above)
+    # still wins, so completing the flow clears the "disconnected" state.
+    if os.environ.get("AGENTPEEK_FORCE_CLAUDE_LOGIN"):
+        return {"connected": False, "method": None,
+                "detail": "Test mode — sign in to Claude below."}
     if CLAUDE_CREDENTIALS.exists():
         return {"connected": True, "method": "subscription",
                 "detail": "Connected via the host's existing Claude login."}
