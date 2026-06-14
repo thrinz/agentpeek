@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>agentpeek — Run Your AI Agents From the Browser | Claude Code session manager</title>
+<meta name="description" content="agentpeek is a free, self-hosted control panel for the Claude Code agents on your Linux or WSL2 box. Run persistent sessions as a browser terminal or a streaming chat, reach them from anywhere over Tailscale, and leave them running when you disconnect.">
+<link rel="canonical" href="https://agentpeek.dev/">
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+
+<!-- Open Graph / social previews -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="agentpeek — Run Your AI Agents From the Browser">
+<meta property="og:description" content="Self-hosted control panel for the Claude Code agents on your box: persistent terminal sessions and a streaming Claude chat, reachable from any browser over your tailnet. They keep running when you disconnect.">
+<meta property="og:url" content="https://agentpeek.dev/">
+<meta property="og:image" content="https://agentpeek.dev/img/chat.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="agentpeek — Run Your AI Agents From the Browser">
+<meta name="twitter:description" content="Persistent Claude Code sessions as a browser terminal or streaming chat, reachable anywhere over Tailscale. Self-hosted, MIT.">
+<meta name="twitter:image" content="https://agentpeek.dev/img/chat.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "agentpeek",
+  "operatingSystem": "Linux, Windows (WSL2)",
+  "applicationCategory": "DeveloperApplication",
+  "description": "A self-hosted, browser-based control panel for AI coding agents. Run persistent Claude Code sessions as a terminal or a streaming chat (Claude Agent SDK), with Markdown/table rendering, inline tool activity, @-mention, image paste, voice, and a model picker. Reachable from any browser over a Tailscale tailnet.",
+  "url": "https://agentpeek.dev/",
+  "downloadUrl": "https://github.com/thrinz/agentpeek",
+  "softwareRequirements": "Python 3.10+, tmux, the claude CLI",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Which AI agents does agentpeek run?",
+      "acceptedAnswer": { "@type": "Answer", "text": "UI (chat) mode runs Claude Code through the Claude Agent SDK — the same agent that edits files and runs commands, rendered as a streaming chat. Shell mode is a real terminal that can run any program; its AI start option launches your own command (e.g. claude, aider)." }
+    },
+    {
+      "@type": "Question",
+      "name": "Do sessions keep running if I close the browser?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Terminal sessions are plain named tmux sessions, and UI-mode agents run as always-on background processes. Close the tab, open it on another device, and you pick up exactly where you left off." }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I reach it from my phone or another machine?",
+      "acceptedAnswer": { "@type": "Answer", "text": "agentpeek binds to localhost and is exposed only over your Tailscale tailnet with a single tailscale serve command — HTTPS, tailnet-only, never the public internet. Open the tailnet URL from any device, including mobile." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I use my Claude Pro or Max subscription?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Sign in with your Claude subscription from inside the app (the same OAuth flow as the terminal), or use an Anthropic API key, or point it at AWS Bedrock or Google Vertex AI." }
+    },
+    {
+      "@type": "Question",
+      "name": "Does agentpeek work on WSL2?",
+      "acceptedAnswer": { "@type": "Answer", "text": "That's the home turf. Run it inside WSL2 and open it from your Windows browser; it auto-starts on boot via systemd user services and is reached over Tailscale." }
+    },
+    {
+      "@type": "Question",
+      "name": "Is agentpeek free?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes — agentpeek is free and open source under the MIT license." }
+    }
+  ]
+}
+</script>
+
+<style>
+  :root { --accent: #2563eb; --fg: #1e293b; --dim: #475569; --bg: #f8fafc; --card: #fff; --border: #e2e8f0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --accent: #60a5fa; --fg: #d7dce5; --dim: #8a93a5; --bg: #0b0e14; --card: #11151f; --border: #232a3a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); line-height: 1.65;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
+  header.hero { text-align: center; padding: 3rem 1rem 1rem; }
+  header.hero img { width: 72px; height: 72px; }
+  h1 { font-size: 2.1rem; line-height: 1.2; margin: .75rem 0 .5rem; }
+  .tagline { font-size: 1.15rem; color: var(--dim); max-width: 660px; margin: 0 auto 1.5rem; }
+  .cta { display: inline-block; background: var(--accent); color: #fff; text-decoration: none;
+         padding: .7rem 1.4rem; border-radius: 8px; font-weight: 600; margin: .25rem; }
+  .cta.alt { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  h2 { font-size: 1.4rem; margin: 2.5rem 0 .75rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.2rem; }
+  .card h3 { margin: 0 0 .4rem; font-size: 1.02rem; }
+  .card p { margin: 0; color: var(--dim); font-size: .95rem; }
+  pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+        padding: 1rem; overflow-x: auto; font-size: .9rem; }
+  details { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+            padding: .7rem 1rem; margin: .5rem 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  details p { color: var(--dim); }
+  footer { text-align: center; color: var(--dim); font-size: .9rem; padding: 2rem; border-top: 1px solid var(--border); }
+  a { color: var(--accent); }
+
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 700px) { .shots { grid-template-columns: 1fr; } }
+  .shots figure { margin: 0; }
+  .shots img { display: block; width: 100%; height: auto; border-radius: 10px;
+    border: 1px solid var(--border); box-shadow: 0 18px 44px -20px rgba(0,0,0,.45); }
+  .shots figcaption { color: var(--dim); font-size: .85rem; margin-top: .4rem; text-align: center; }
+
+  .badges { margin: 1rem 0 .25rem; }
+  .badges img { height: 20px; margin: 0 .15rem; vertical-align: middle; }
+
+  .flow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+          gap: .5rem; margin: 1.5rem 0; color: var(--dim); font-size: .92rem; }
+  .flow .box { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+               padding: .5rem .9rem; color: var(--fg); font-weight: 600; }
+  .flow .arrow { color: var(--accent); font-weight: 700; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 700px) { .two { grid-template-columns: 1fr; } }
+  .two .card h3 { font-size: 1.1rem; }
+  .two .card ul { margin: .5rem 0 0; padding-left: 1.1rem; color: var(--dim); font-size: .95rem; }
+  .two .card li { margin: .2rem 0; }
+
+  .companion { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid var(--border); }
+  .companion .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: .75rem;
+                        color: var(--accent); font-weight: 700; margin: 0; }
+  .companion h2 { margin-top: .2rem; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <img src="logo.svg" alt="agentpeek logo">
+  <h1>Run your AI agents from any browser.<br>Leave them running.</h1>
+  <p class="tagline">agentpeek is a free, self-hosted control panel for the Claude Code agents on your
+     Linux or WSL2 box. Start persistent sessions, drive them as a terminal or a streaming chat, and
+     reach them from any browser over your tailnet — they keep working when you close the laptop.</p>
+  <a class="cta" href="https://github.com/thrinz/agentpeek">Get it on GitHub</a>
+  <a class="cta alt" href="https://github.com/thrinz/agentpeek#setup">Quick start</a>
+  <p class="badges">
+    <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT licensed">
+    <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
+    <img src="https://img.shields.io/badge/100%25-self--hosted-success" alt="100% self-hosted">
+    <img src="https://img.shields.io/badge/access-Tailscale-success" alt="Tailscale">
+  </p>
+</header>
+
+<main>
+  <h2>Built for long-running coding agents</h2>
+  <p>You run Claude Code on a remote or WSL2 box and want to start it, watch it, and steer it without
+     being chained to one SSH terminal. agentpeek puts a browser UI in front of your machine: named
+     sessions you create, switch between, and reach from anywhere — that don't stop when you disconnect.</p>
+
+  <div class="flow">
+    <span class="box">Any browser</span>
+    <span class="arrow">→</span>
+    <span class="box">agentpeek · your tailnet</span>
+    <span class="arrow">→</span>
+    <span class="box">tmux + Claude Agent SDK</span>
+    <span class="arrow">→</span>
+    <span class="box">your project</span>
+  </div>
+
+  <h2>Two ways to drive an agent</h2>
+  <div class="two">
+    <div class="card">
+      <h3>🖥️ Shell — a real terminal</h3>
+      <ul>
+        <li>Named, persistent tmux sessions with unlimited scrollback</li>
+        <li>Select-to-copy, native browser scrollback, no copy-mode dance</li>
+        <li>Reach the exact same session over SSH with <code>tmux attach</code></li>
+        <li>An "AI" start option that launches your own command (claude, aider…)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>💬 UI — a streaming Claude chat</h3>
+      <ul>
+        <li>The Claude Agent SDK: it edits files and runs commands, as chat</li>
+        <li>Token-streamed replies with rendered Markdown, tables &amp; code</li>
+        <li>Inline tool activity, a message queue, Stop / Esc to interrupt</li>
+        <li>@-mention files, paste/drop images, voice in &amp; out, model picker</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>What you get</h2>
+  <div class="grid">
+    <div class="card"><h3>🔄 Sessions that persist</h3><p>Named tmux sessions and always-on background agents survive a closed tab or a hopped device — pick up exactly where you left off.</p></div>
+    <div class="card"><h3>💬 Streaming Claude chat</h3><p>UI mode runs the Claude Agent SDK: token-by-token replies, rendered Markdown and tables, inline tool calls, queue and interrupt.</p></div>
+    <div class="card"><h3>📎 @-mention, paste &amp; voice</h3><p>Reference files with <code>@</code>, paste or drop images for vision, dictate with your mic, and have replies read back.</p></div>
+    <div class="card"><h3>🗂️ Folders &amp; working dirs</h3><p>Group sessions into collapsible folders and launch each one in any project directory under your tree.</p></div>
+    <div class="card"><h3>☁️ First-party, Bedrock or Vertex</h3><p>Use your Claude Pro/Max subscription, an Anthropic API key, AWS Bedrock, or Google Vertex AI.</p></div>
+    <div class="card"><h3>🔐 Self-hosted &amp; private</h3><p>Binds to localhost, exposed only over your Tailscale tailnet, with optional password login. Nothing is public.</p></div>
+  </div>
+
+  <h2>See it in action</h2>
+  <div class="shots">
+    <figure style="grid-column: 1 / -1"><img src="img/chat.png" loading="lazy" alt="agentpeek UI mode: a Claude chat rendering a Markdown table and a code block, with a model picker and a sidebar of sessions grouped into folders"><figcaption>UI mode — a streaming Claude chat that renders Markdown, tables and code, with folders of persistent sessions in the sidebar</figcaption></figure>
+    <figure style="grid-column: 1 / -1"><img src="img/create.png" loading="lazy" alt="The create-session dialog: pick a folder, Shell or UI type, and a working directory"><figcaption>Create a session — Shell (terminal) or UI (Claude chat), in any project folder</figcaption></figure>
+  </div>
+
+  <section class="companion">
+    <p class="eyebrow">Companion app</p>
+    <h2>🪟 Pairs with filepeek</h2>
+    <p>agentpeek is where the work happens — you drive the agents that <em>generate</em> your docs, code,
+       and reports. <a href="https://filepeek.dev">filepeek</a> is the downstream viewer that
+       <em>renders</em> the Markdown, HTML, and Office files those agents leave behind. Run them with
+       agentpeek, read them with filepeek — both self-hosted, both reachable over your tailnet.</p>
+  </section>
+
+  <h2>Quick start</h2>
+  <pre><code>git clone https://github.com/thrinz/agentpeek &amp;&amp; cd agentpeek
+./setup.sh
+# reach it on your tailnet (HTTPS, tailnet-only):
+tailscale serve --bg --https=9443 http://127.0.0.1:8090</code></pre>
+  <p>Open <code>http://localhost:8090</code> — on WSL2 that works straight from your Windows browser.
+     <code>setup.sh</code> installs ttyd, a Python venv, and three systemd user services that auto-start
+     on boot. Needs <code>tmux</code> and the <code>claude</code> CLI for UI mode.</p>
+
+  <h2>Frequently asked questions</h2>
+  <details><summary>Which AI agents does it run?</summary>
+    <p>UI (chat) mode runs Claude Code through the Claude Agent SDK — the same agent that edits files and
+       runs commands, rendered as a streaming chat. Shell mode is a real terminal that can run any
+       program; its "AI" start option launches your own command (e.g. <code>claude</code>, <code>aider</code>).</p></details>
+  <details><summary>Do sessions keep running if I close the browser?</summary>
+    <p>Yes. Terminal sessions are plain named tmux sessions, and UI-mode agents run as always-on
+       background processes. Close the tab, open it on another device, and pick up where you left off.</p></details>
+  <details><summary>How do I reach it from my phone?</summary>
+    <p>Over your Tailscale tailnet. agentpeek binds to localhost and you expose it with one
+       <code>tailscale serve</code> command — HTTPS, tailnet-only, never the public internet.</p></details>
+  <details><summary>Can I use my Claude subscription?</summary>
+    <p>Yes — sign in with your Pro/Max subscription from inside the app (the same OAuth flow as the
+       terminal), or use an Anthropic API key, or point it at AWS Bedrock or Google Vertex AI.</p></details>
+  <details><summary>Does it work on WSL2?</summary>
+    <p>That's the home turf — runs in WSL2, opens from your Windows browser, and auto-starts on boot
+       via systemd user services.</p></details>
+  <details><summary>Is it free?</summary>
+    <p>Yes — free and open source under the MIT license.</p></details>
+</main>
+
+<footer>
+  <a href="https://github.com/thrinz/agentpeek">GitHub</a> ·
+  <a href="https://github.com/thrinz/agentpeek#readme">Docs</a> ·
+  <a href="https://filepeek.dev">filepeek</a> ·
+  MIT licensed
+</footer>
+
+</body>
+</html>
