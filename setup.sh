@@ -4,6 +4,10 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ttyd and the claude CLI install to ~/.local/bin, which may not be on PATH in a
+# non-login shell — put it on PATH up front so re-runs detect them and skip reinstall.
+export PATH="$HOME/.local/bin:$PATH"
+
 # Ports are configurable so agentpeek can coexist with another service (or another
 # WSL distro sharing localhost): AGENTPEEK_PORT=9090 AGENTPEEK_TTYD_PORT=9091 ./setup.sh
 PORT="${AGENTPEEK_PORT:-8090}"
@@ -65,11 +69,16 @@ MSG
 fi
 
 echo "==> 1/6 ttyd"
-if ! command -v ttyd >/dev/null 2>&1; then
+# Skip if ttyd is already on PATH *or* already at ~/.local/bin (which may not be
+# on a re-run's PATH). Download to a temp file and mv into place — a plain curl -o
+# over a running ttyd fails with "text file busy" (curl error 23).
+if ! command -v ttyd >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/ttyd" ]]; then
   mkdir -p "$HOME/.local/bin"
-  curl -fsSL -o "$HOME/.local/bin/ttyd" \
+  tmp_ttyd="$(mktemp)"
+  curl -fsSL -o "$tmp_ttyd" \
     "https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64"
-  chmod +x "$HOME/.local/bin/ttyd"
+  chmod +x "$tmp_ttyd"
+  mv -f "$tmp_ttyd" "$HOME/.local/bin/ttyd"
 fi
 TTYD="$(command -v ttyd || echo "$HOME/.local/bin/ttyd")"
 echo "    ttyd: $TTYD ($("$TTYD" --version))"
@@ -80,9 +89,8 @@ echo "==> 2/6 Claude Code"
 if ! command -v claude >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/claude" ]]; then
   curl -fsSL https://claude.ai/install.sh | bash
 fi
-# The installer puts it in ~/.local/bin; make sure it's reachable in this script
-# and in the user's shells from here on.
-export PATH="$HOME/.local/bin:$PATH"
+# hash -r so a claude just installed into the already-on-PATH ~/.local/bin is found.
+hash -r 2>/dev/null || true
 if command -v claude >/dev/null 2>&1; then
   echo "    claude: $(command -v claude) ($(claude --version 2>/dev/null || echo '?'))"
 else
