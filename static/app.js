@@ -588,6 +588,9 @@ let chatTotalCost = 0;
 let chatModel = 'opus';
 let ttsOn = false;
 let recog = null;
+// Cost is only meaningful with an API key; subscription (Pro/Max) usage is
+// covered by the plan, so we hide the $ figure unless method === 'api_key'.
+let costVisible = false;
 
 /* --- minimal, safe markdown renderer (paragraphs, code, lists, GFM tables) --- */
 
@@ -708,7 +711,7 @@ function toolUseEl(ev) {
 function resultEl(ev) {
   const el = document.createElement('div');
   el.className = 'msg result' + (ev.is_error ? ' err' : '');
-  const cost = typeof ev.cost === 'number' ? ` · $${ev.cost.toFixed(4)}` : '';
+  const cost = (costVisible && typeof ev.cost === 'number') ? ` · $${ev.cost.toFixed(4)}` : '';
   el.textContent = (ev.is_error ? '⚠ ended with error' : 'done') + cost;
   return el;
 }
@@ -783,6 +786,7 @@ function setChatBusy(busy) {
   $('chat').classList.toggle('busy', !!busy);
 }
 function updateCost() { $('chat-cost').textContent = '$' + chatTotalCost.toFixed(3); }
+function applyCostVisibility() { $('chat-cost').style.display = costVisible ? '' : 'none'; }
 function setConn(state) {
   const dot = $('chat-conn');
   dot.classList.remove('open', 'connecting', 'closed');
@@ -839,7 +843,7 @@ function openChat(name) {
   showView('ui');
   $('chat-title').textContent = name;
   $('chat-log').textContent = '';
-  chatTotalCost = 0; updateCost();
+  chatTotalCost = 0; updateCost(); applyCostVisibility();
   setChatBusy(false);
   const s = sessions.find((x) => x.name === name && x.kind === 'ui');
   chatModel = (s && s.model) || 'opus';
@@ -1001,8 +1005,13 @@ function setClaudeChip(st) {
 }
 
 async function refreshClaude() {
-  try { const st = await api.claudeStatus(); setClaudeChip(st); return st; }
-  catch { return null; }
+  try {
+    const st = await api.claudeStatus();
+    setClaudeChip(st);
+    costVisible = !!(st && st.method === 'api_key');
+    applyCostVisibility();
+    return st;
+  } catch { return null; }
 }
 
 function clRenderState(st) {
