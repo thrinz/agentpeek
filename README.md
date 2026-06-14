@@ -86,6 +86,25 @@ start option are remembered per browser.
 > Claude Code launcher alias. Change the command in `mux.create()`
 > (`app/multiplexer.py`) to whatever starts your agent (`claude`, `aider`, …).
 
+## Claude connection (for UI mode)
+
+UI-mode sessions (coming) run the **Claude Agent SDK**, which authenticates with
+whatever the host's `claude` CLI uses. The **Claude** chip at the bottom of the
+sidebar shows the connection state and, when not connected, opens a sign-in
+panel:
+
+- **Sign in with Claude** drives `claude setup-token` server-side: it prints an
+  authorize URL (shown in the panel), you approve it in your browser and paste
+  the code back, and the resulting long-lived subscription token is saved as
+  `CLAUDE_CODE_OAUTH_TOKEN` in `~/.config/agentpeek/agentpeek.env` — the same
+  flow as `/login` in the terminal. (Requires a Claude Pro/Max/Team/Enterprise
+  plan.)
+- **Use an API key** saves an `ANTHROPIC_API_KEY` instead (bills per-token).
+
+If the host is already logged into Claude Code (`~/.claude/.credentials.json`
+exists), the chip shows **connected** and nothing else is needed. Disconnecting
+clears only agentpeek's saved token/key — it never touches the host's own login.
+
 ## Security model
 
 agentpeek binds to `127.0.0.1` only and is reachable remotely solely through

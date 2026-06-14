@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth
+from . import claude_auth
 from . import multiplexer as mux
 
 TTYD_HTTP = "http://127.0.0.1:7681"
@@ -365,5 +366,6 @@ async def term_http(path: str, request: Request):
 
 # Auth middleware + /login routes must be registered before the catch-all mount.
 auth.install_auth(app)
+claude_auth.install_claude_auth(app)
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

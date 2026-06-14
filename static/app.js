@@ -47,6 +47,12 @@ const api = {
   dirs: (path) => req('GET', `/api/dirs?path=${encodeURIComponent(path)}`),
   createFolder: (path) => req('POST', '/api/folders', { path }),
   deleteFolder: (path) => req('DELETE', `/api/folders/${encodeURIComponent(path)}`),
+  claudeStatus: () => req('GET', '/api/claude/status'),
+  claudeStart: () => req('POST', '/api/claude/login/start'),
+  claudeCode: (code) => req('POST', '/api/claude/login/code', { code }),
+  claudeCancel: () => req('POST', '/api/claude/login/cancel'),
+  claudeApiKey: (key) => req('POST', '/api/claude/apikey', { key }),
+  claudeDisconnect: () => req('POST', '/api/claude/disconnect'),
 };
 
 async function loadConfig() {
@@ -546,6 +552,122 @@ function flash(msg) {
   setTimeout(() => t.remove(), 1500);
 }
 
+/* ---------- Claude connection ---------- */
+
+let clMode = 'oauth';   // 'oauth' | 'apikey'
+let clStep = 'start';   // oauth sub-step: 'start' | 'code'
+
+const clShow = (id, on) => { $(id).hidden = !on; };
+
+function setClaudeChip(st) {
+  const chip = $('claude-status');
+  const txt = $('claude-status-text');
+  if (!st) { txt.textContent = 'Claude…'; return; }
+  chip.classList.toggle('connected', !!st.connected);
+  chip.classList.toggle('disconnected', !st.connected);
+  txt.textContent = st.connected ? 'Claude connected' : 'Claude — sign in';
+}
+
+async function refreshClaude() {
+  try { const st = await api.claudeStatus(); setClaudeChip(st); return st; }
+  catch { return null; }
+}
+
+function clRenderState(st) {
+  $('cl-status').textContent = st ? st.detail : '';
+  $('cl-error').textContent = '';
+  $('cl-code').value = ''; $('cl-key').value = ''; $('cl-url').value = '';
+  const managed = st && (st.method === 'oauth_token' || st.method === 'api_key');
+  clShow('cl-disconnect', !!managed);
+}
+
+function selectClChoice(mode) {
+  clMode = mode; clStep = 'start';
+  $('cl-signin').classList.toggle('selected', mode === 'oauth');
+  $('cl-use-key').classList.toggle('selected', mode === 'apikey');
+  clShow('cl-oauth', false);
+  clShow('cl-apikey', mode === 'apikey');
+  clShow('cl-submit', true);
+  $('cl-submit').disabled = false;
+  $('cl-submit').textContent = mode === 'apikey' ? 'Save key' : 'Start sign-in';
+  $('cl-error').textContent = '';
+}
+
+async function openClaudeDialog() {
+  const st = await refreshClaude();
+  clRenderState(st);
+  selectClChoice('oauth');
+  $('claude-dlg').showModal();
+}
+
+function finishClaude(st) {
+  setClaudeChip(st);
+  clRenderState(st);
+  $('cl-submit').disabled = false;
+  if (st && st.connected) { $('claude-dlg').close(); flash('Claude connected'); }
+}
+
+async function clSubmit() {
+  const btn = $('cl-submit');
+  $('cl-error').textContent = '';
+  try {
+    if (clMode === 'apikey') {
+      btn.disabled = true;
+      finishClaude(await api.claudeApiKey($('cl-key').value.trim()));
+      return;
+    }
+    if (clStep === 'start') {
+      btn.disabled = true; btn.textContent = 'Starting…';
+      const { url } = await api.claudeStart();
+      $('cl-url').value = url;
+      clShow('cl-oauth', true);
+      clStep = 'code';
+      btn.textContent = 'Connect'; btn.disabled = false;
+      $('cl-code').focus();
+    } else {
+      const code = $('cl-code').value.trim();
+      if (!code) { $('cl-error').textContent = 'Paste the code first.'; return; }
+      btn.disabled = true; btn.textContent = 'Connecting…';
+      finishClaude(await api.claudeCode(code));
+    }
+  } catch (e) {
+    $('cl-error').textContent = e.message;
+    btn.disabled = false;
+    btn.textContent = clMode === 'apikey' ? 'Save key'
+      : (clStep === 'code' ? 'Connect' : 'Start sign-in');
+  }
+}
+
+async function closeClaudeDialog() {
+  if (clMode === 'oauth' && clStep === 'code') { try { await api.claudeCancel(); } catch { /* ignore */ } }
+  $('claude-dlg').close();
+}
+
+async function clDisconnect() {
+  try {
+    const st = await api.claudeDisconnect();
+    setClaudeChip(st); clRenderState(st); selectClChoice('oauth');
+  } catch (e) { $('cl-error').textContent = e.message; }
+}
+
+$('claude-status').addEventListener('click', openClaudeDialog);
+$('cl-signin').addEventListener('click', () => selectClChoice('oauth'));
+$('cl-use-key').addEventListener('click', () => selectClChoice('apikey'));
+$('cl-submit').addEventListener('click', clSubmit);
+$('cl-cancel').addEventListener('click', closeClaudeDialog);
+$('cl-disconnect').addEventListener('click', clDisconnect);
+$('cl-url-open').addEventListener('click', () => {
+  const u = $('cl-url').value; if (u) window.open(u, '_blank', 'noopener');
+});
+$('cl-url-copy').addEventListener('click', () => {
+  const u = $('cl-url').value; if (u) copyText(u);
+});
+for (const id of ['cl-code', 'cl-key']) {
+  $(id).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); clSubmit(); }
+  });
+}
+
 /* ---------- init ---------- */
 
 function setSidebar(collapsed) {
@@ -583,4 +705,5 @@ document.addEventListener('visibilitychange', () => {
   await loadConfig();
   try { hostInfo = await api.host(); } catch { /* keep placeholders */ }
   refresh();
+  refreshClaude();
 })();

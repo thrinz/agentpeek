@@ -17,6 +17,11 @@
       <button id="collapse-btn" title="Collapse sidebar">«</button>
     </div>
     <nav id="session-list"></nav>
+    <div id="sidebar-bottom">
+      <button id="claude-status" class="claude-chip" title="Claude connection">
+        <span class="cl-dot">●</span><span id="claude-status-text">Claude…</span>
+      </button>
+    </div>
   </aside>
 
   <main id="main">
@@ -68,6 +73,44 @@
       <menu>
         <button type="button" id="dlg-cancel">Cancel</button>
         <button value="ok" id="dlg-ok">OK</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="claude-dlg">
+    <form method="dialog">
+      <h3>Claude connection</h3>
+      <p id="cl-status" class="cl-status"></p>
+
+      <div id="cl-connect">
+        <p class="cl-hint">UI-mode sessions run the Claude agent. Sign in with your
+          Claude subscription, or use an Anthropic API key.</p>
+        <div id="cl-choose" class="chips">
+          <button type="button" id="cl-signin" class="chip selected">Sign in with Claude</button>
+          <button type="button" id="cl-use-key" class="chip">Use an API key</button>
+        </div>
+
+        <div id="cl-oauth" hidden>
+          <p class="cl-hint">Open this URL, approve access, then paste the code below:</p>
+          <div class="cl-url-row">
+            <input id="cl-url" readonly spellcheck="false">
+            <button type="button" id="cl-url-open">Open</button>
+            <button type="button" id="cl-url-copy">Copy</button>
+          </div>
+          <input id="cl-code" placeholder="Paste code here" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div id="cl-apikey" hidden>
+          <input id="cl-key" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+        </div>
+
+        <p id="cl-error" class="cl-error"></p>
+      </div>
+
+      <menu>
+        <button type="button" id="cl-disconnect" class="danger" hidden>Disconnect</button>
+        <button type="button" id="cl-cancel">Close</button>
+        <button type="button" id="cl-submit" hidden>Connect</button>
       </menu>
     </form>
   </dialog>
