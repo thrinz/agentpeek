@@ -1,0 +1,12 @@
+[Unit]
+Description=agentpeek: ttyd web terminal (tmux attach bridge)
+After=agentpeek-tmux.service
+Wants=agentpeek-tmux.service
+
+[Service]
+ExecStart=@TTYD@ --port 7681 --interface 127.0.0.1 --writable --url-arg --base-path /term -t scrollback=200000 -t disableLeaveAlert=true @REPO@/bin/agentpeek-attach
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

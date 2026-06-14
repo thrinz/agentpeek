@@ -1,0 +1,12 @@
+[Unit]
+Description=agentpeek: tmux session manager web app
+After=agentpeek-ttyd.service
+
+[Service]
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8090
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

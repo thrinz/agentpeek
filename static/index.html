@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>agentpeek</title>
+  <link rel="icon" type="image/svg+xml" href="logo.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <div id="sidebar-top">
+      <button id="create-btn">＋ Create Session</button>
+      <button id="add-folder-btn" title="New folder">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+      </button>
+      <button id="collapse-btn" title="Collapse sidebar">«</button>
+    </div>
+    <nav id="session-list"></nav>
+  </aside>
+
+  <main id="main">
+    <button id="expand-btn" title="Expand sidebar">»</button>
+    <div id="empty">
+      <h2>No session attached</h2>
+      <p>Create a session or pick one from the sidebar.</p>
+    </div>
+    <iframe id="term" title="terminal" allow="clipboard-read; clipboard-write"></iframe>
+  </main>
+
+  <dialog id="cdlg">
+    <form method="dialog">
+      <h3>Create session</h3>
+      <label class="field">
+        <span class="field-label">Session name</span>
+        <input id="c-name" autocomplete="off" spellcheck="false" placeholder="e.g. web-build">
+      </label>
+      <div class="field">
+        <span class="field-label">Folder</span>
+        <div id="c-folders"></div>
+      </div>
+      <div class="field">
+        <span class="field-label">Start with</span>
+        <div id="c-mode" class="chips">
+          <button type="button" class="chip selected" data-mode="ai">AI (cds)</button>
+          <button type="button" class="chip" data-mode="shell">Shell</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field-label">Working directory</span>
+        <div id="c-dirtree"></div>
+        <div id="c-path"></div>
+      </div>
+      <p id="c-error"></p>
+      <menu>
+        <button type="button" id="c-cancel">Cancel</button>
+        <button type="button" id="c-ok">Create</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="dlg">
+    <form method="dialog">
+      <h3 id="dlg-title"></h3>
+      <p id="dlg-msg"></p>
+      <input id="dlg-input" autocomplete="off" spellcheck="false">
+      <p id="dlg-error"></p>
+      <menu>
+        <button type="button" id="dlg-cancel">Cancel</button>
+        <button value="ok" id="dlg-ok">OK</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

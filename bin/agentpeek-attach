@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# ttyd entrypoint. ttyd runs this with the session name as $1 (from ?arg=<name>).
+# Replays tmux pane history into the terminal before attaching, so the
+# browser's native scrollback covers output from before this attach (FR-7).
+set -euo pipefail
+
+name="${1:-}"
+if [[ -z "$name" ]]; then
+  echo "agentpeek: no session name given (expected ?arg=<name>)" >&2
+  exit 1
+fi
+if [[ ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "agentpeek: invalid session name" >&2
+  exit 1
+fi
+if ! tmux has-session -t "=$name" 2>/dev/null; then
+  echo "agentpeek: session '$name' does not exist" >&2
+  exit 1
+fi
+
+# History above the visible screen (-E -1); attach redraws the screen itself.
+# Trailing ':' makes tmux parse the exact-match '=' as a session:window target
+# (a bare '=name' is rejected for pane-target commands).
+tmux capture-pane -p -e -S - -E -1 -t "=$name:" 2>/dev/null || true
+
+# Push the replayed lines fully into scrollback: attach clears the visible
+# screen, which would otherwise eat the last screenful of replayed history.
+rows="$(stty size 2>/dev/null | cut -d' ' -f1)"
+if [[ "${rows:-0}" -gt 0 ]]; then
+  printf '\n%.0s' $(seq 1 "$rows")
+fi
+
+exec tmux attach-session -t "=$name"

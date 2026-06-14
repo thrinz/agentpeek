@@ -1,0 +1,12 @@
+[Unit]
+Description=agentpeek: tmux server (keeps a 'main' session so the server survives boot)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# -A: idempotent — attach-or-create, so restarts don't fail.
+# Note: stopping this unit kills the tmux server and ALL sessions in it.
+ExecStart=/usr/bin/tmux new-session -A -d -s main
+
+[Install]
+WantedBy=default.target
