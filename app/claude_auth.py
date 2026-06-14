@@ -54,6 +54,20 @@ def _tail(text: str, n: int = 240) -> str:
     return clean[-n:]
 
 
+def _debug_dump(text: str) -> None:
+    """Write the raw setup-token output to a 0600 file for diagnosis. Only when
+    AGENTPEEK_DEBUG_SETUP_TOKEN is set (the dump can contain the token)."""
+    if not os.environ.get("AGENTPEEK_DEBUG_SETUP_TOKEN"):
+        return
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        path = CONFIG_DIR / "setup-token-debug.txt"
+        path.write_text(text)
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 # --- status --------------------------------------------------------------
 
 def claude_status() -> dict:
@@ -213,22 +227,58 @@ def submit_code(code: str) -> dict:
         flow = _flow
         if not flow or flow.proc.poll() is not None:
             raise RuntimeError("No active sign-in — start again.")
-        os.write(flow.master, (code.strip() + "\n").encode())
-        text = flow.read_until(
-            lambda t: bool(_TOKEN_RE.search(t))
-            or "nvalid" in t or "rror" in t or "ailed" in t or "xpired" in t,
-            timeout=40,
-        )
+        # The masked TUI absorbs a trailing \r into a long paste, so the Enter
+        # never registers. Send the code, let it land, then send \r separately.
+        os.write(flow.master, code.strip().encode())
+        time.sleep(0.6)
+        os.write(flow.master, b"\r")
+        # Read until the token appears, the CLI rejects the code, exits, or times out.
+        end = time.time() + 50
+        rejected = False
+        while time.time() < end:
+            r, _, _ = select.select([flow.master], [], [], 0.3)
+            if r:
+                try:
+                    chunk = os.read(flow.master, 4096)
+                except OSError:
+                    break
+                if chunk:
+                    flow.buf += chunk
+            text = _strip(flow.buf)
+            if _TOKEN_RE.search(text):
+                break
+            compact = text.lower().replace(" ", "")
+            if "invalidcode" in compact or "oautherror" in compact or "entertoretry" in compact:
+                rejected = True
+                break
+            if flow.proc.poll() is not None:  # CLI finished — drain trailing output
+                for _ in range(20):
+                    rr, _, _ = select.select([flow.master], [], [], 0.1)
+                    if not rr:
+                        break
+                    try:
+                        c = os.read(flow.master, 4096)
+                    except OSError:
+                        break
+                    if not c:
+                        break
+                    flow.buf += c
+                break
+        text = _strip(flow.buf)
+        _debug_dump(text)
         m = _TOKEN_RE.search(text)
-        if not m:
+        if m:
+            save_token(m.group(0))
             _kill(flow)
             _flow = None
-            raise RuntimeError("Sign-in did not return a token. " + _tail(text))
-        token = m.group(0)
-        save_token(token)
+            return claude_status()
         _kill(flow)
         _flow = None
-        return claude_status()
+        if rejected:
+            raise RuntimeError(
+                "Claude rejected the code (invalid or expired). Click ‘Start sign-in’ "
+                "again, then open the new URL and paste the full code right after approving.")
+        raise RuntimeError("Sign-in did not return a token. " + _tail(text))
 
 
 # --- routes --------------------------------------------------------------
