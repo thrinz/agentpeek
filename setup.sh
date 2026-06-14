@@ -4,7 +4,18 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "==> 0/5 prerequisites"
+echo "==> 0/6 prerequisites"
+# Python 3.10+ is required (fastapi/claude-agent-sdk). We don't upgrade Python —
+# that's a system-level decision — so fail clearly instead of dying inside pip.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "    !! python3 not found — install Python 3.10+ and re-run." >&2
+  exit 1
+fi
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
+  echo "    !! Python $(python3 -c 'import platform; print(platform.python_version())') is too old — agentpeek needs 3.10+." >&2
+  echo "       Install a newer Python (e.g. the deadsnakes PPA on Ubuntu), then re-run." >&2
+  exit 1
+fi
 # Packages agentpeek needs that a fresh Debian/Ubuntu (incl. WSL2) often lacks.
 need=()
 command -v tmux >/dev/null 2>&1 || need+=(tmux)
@@ -33,7 +44,7 @@ MSG
   exit 1
 fi
 
-echo "==> 1/5 ttyd"
+echo "==> 1/6 ttyd"
 if ! command -v ttyd >/dev/null 2>&1; then
   mkdir -p "$HOME/.local/bin"
   curl -fsSL -o "$HOME/.local/bin/ttyd" \
@@ -43,13 +54,29 @@ fi
 TTYD="$(command -v ttyd || echo "$HOME/.local/bin/ttyd")"
 echo "    ttyd: $TTYD ($("$TTYD" --version))"
 
-echo "==> 2/5 python venv"
+echo "==> 2/6 Claude Code"
+# Needed for UI (chat) mode, and for the default 'claude' terminal launcher.
+# Native installer — standalone binary to ~/.local/bin, no Node/npm required.
+if ! command -v claude >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/claude" ]]; then
+  curl -fsSL https://claude.ai/install.sh | bash
+fi
+# The installer puts it in ~/.local/bin; make sure it's reachable in this script
+# and in the user's shells from here on.
+export PATH="$HOME/.local/bin:$PATH"
+if command -v claude >/dev/null 2>&1; then
+  echo "    claude: $(command -v claude) ($(claude --version 2>/dev/null || echo '?'))"
+else
+  echo "    !! claude install did not complete — UI mode and the 'claude' launcher" >&2
+  echo "       won't work until it's installed (see https://docs.claude.com/claude-code)." >&2
+fi
+
+echo "==> 3/6 python venv"
 if [[ ! -x "$REPO/.venv/bin/pip" ]]; then
   python3 -m venv "$REPO/.venv"
 fi
 "$REPO/.venv/bin/pip" install -q -r "$REPO/requirements.txt"
 
-echo "==> 3/5 tmux config"
+echo "==> 4/6 tmux config"
 SOURCE_LINE="source-file $REPO/conf/agentpeek.tmux.conf"
 touch "$HOME/.tmux.conf"
 if ! grep -qF "$SOURCE_LINE" "$HOME/.tmux.conf"; then
@@ -58,7 +85,7 @@ fi
 # Apply to an already-running server too (no-op if none is running)
 tmux source-file "$REPO/conf/agentpeek.tmux.conf" 2>/dev/null || true
 
-echo "==> 4/5 systemd user services"
+echo "==> 5/6 systemd user services"
 mkdir -p "$HOME/.config/systemd/user"
 for unit in agentpeek-tmux agentpeek-ttyd agentpeek; do
   sed -e "s|@REPO@|$REPO|g" -e "s|@TTYD@|$TTYD|g" \
@@ -67,7 +94,7 @@ done
 systemctl --user daemon-reload
 systemctl --user enable --now agentpeek-tmux agentpeek-ttyd agentpeek
 
-echo "==> 5/5 linger (start services at WSL2 boot, without a login)"
+echo "==> 6/6 linger (start services at WSL2 boot, without a login)"
 if ! loginctl enable-linger "$USER" 2>/dev/null; then
   echo "    !! could not enable linger; run manually: sudo loginctl enable-linger $USER"
 fi
@@ -77,15 +104,27 @@ echo "agentpeek is up:  http://127.0.0.1:8090"
 echo "Expose on the tailnet (HTTPS, tailnet-only):"
 echo "    tailscale serve --bg --https=9443 http://127.0.0.1:8090"
 
-# These can't be auto-installed safely — flag them if missing.
-if ! command -v claude >/dev/null 2>&1; then
+if command -v claude >/dev/null 2>&1; then
   echo
-  echo "Note: UI (Claude chat) mode needs the 'claude' CLI, which isn't installed."
-  echo "      Install Claude Code (e.g. npm install -g @anthropic-ai/claude-code, or see"
-  echo "      https://docs.claude.com/claude-code), then sign in from agentpeek's Claude chip."
+  echo "Claude Code is installed. Sign in from agentpeek's Claude chip (or run 'claude' once)."
 fi
+# Tailscale gives remote/mobile access and installs system-wide (sudo), so we ask
+# rather than assume. Set AGENTPEEK_INSTALL_TAILSCALE=1 (or 0) to answer without a
+# prompt — e.g. when piping setup.sh through a non-interactive shell.
 if ! command -v tailscale >/dev/null 2>&1; then
-  echo
-  echo "Note: for remote/mobile access, install Tailscale and run 'tailscale up':"
-  echo "      curl -fsSL https://tailscale.com/install.sh | sh"
+  install_ts="${AGENTPEEK_INSTALL_TAILSCALE:-}"
+  if [[ -z "$install_ts" && -t 0 ]]; then
+    read -rp $'\nInstall Tailscale now for remote/mobile access? [y/N] ' reply
+    [[ "$reply" =~ ^[Yy] ]] && install_ts=1 || install_ts=0
+  fi
+  if [[ "$install_ts" == "1" ]]; then
+    echo "    installing Tailscale (sudo)…"
+    curl -fsSL https://tailscale.com/install.sh | sh
+    echo "    installed. Connect this machine:  sudo tailscale up"
+    echo "    then expose agentpeek:            tailscale serve --bg --https=9443 http://127.0.0.1:8090"
+  else
+    echo
+    echo "Note: for remote/mobile access, install Tailscale and run 'tailscale up':"
+    echo "      curl -fsSL https://tailscale.com/install.sh | sh"
+  fi
 fi

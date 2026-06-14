@@ -4,6 +4,9 @@ After=agentpeek-ttyd.service
 
 [Service]
 WorkingDirectory=@REPO@
+# UI mode spawns the 'claude' CLI (Agent SDK); the native installer puts it in
+# ~/.local/bin, which isn't on a systemd user service's default PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Optional secrets (AGENTPEEK_PASSWORD_HASH / AGENTPEEK_TOKEN / AGENTPEEK_SECRET).
 # The leading '-' makes the file optional, so this is a no-op until you create it.
 EnvironmentFile=-%h/.config/agentpeek/agentpeek.env
