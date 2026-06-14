@@ -96,6 +96,17 @@ boot. At the end it **prompts you to set a browser login password** (hashed into
 It's idempotent — safe to re-run — and offers to install Tailscale if it isn't
 already present.
 
+**Custom ports.** agentpeek uses `8090` (web) and `7681` (ttyd) by default. To run
+it alongside another service — or another WSL distro that already holds those ports
+on a shared `localhost` — pass different ports at setup:
+
+```bash
+AGENTPEEK_PORT=9090 AGENTPEEK_TTYD_PORT=9091 ./setup.sh
+```
+
+setup bakes them into the systemd units (the app's reverse proxy follows the ttyd
+port automatically), so re-running with the same values is all it takes.
+
 Expose on the tailnet (HTTPS, tailnet-only — never the public internet):
 
 ```bash

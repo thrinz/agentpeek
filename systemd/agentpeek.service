@@ -7,10 +7,12 @@ WorkingDirectory=@REPO@
 # UI mode spawns the 'claude' CLI (Agent SDK); the native installer puts it in
 # ~/.local/bin, which isn't on a systemd user service's default PATH.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Tell the app which port ttyd listens on, so its reverse proxy targets match.
+Environment=AGENTPEEK_TTYD_PORT=@TTYD_PORT@
 # Optional secrets (AGENTPEEK_PASSWORD_HASH / AGENTPEEK_TOKEN / AGENTPEEK_SECRET).
 # The leading '-' makes the file optional, so this is a no-op until you create it.
 EnvironmentFile=-%h/.config/agentpeek/agentpeek.env
-ExecStart=@REPO@/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8090
+ExecStart=@REPO@/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port @PORT@
 Restart=on-failure
 RestartSec=2
 

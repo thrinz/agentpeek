@@ -34,8 +34,11 @@ from . import claude_auth
 from . import multiplexer as mux
 from . import ui_agent
 
-TTYD_HTTP = "http://127.0.0.1:7681"
-TTYD_WS = "ws://127.0.0.1:7681"
+# ttyd's port is configurable (AGENTPEEK_TTYD_PORT); the systemd unit passes the
+# same value to ttyd's --port, so the proxy target stays in sync.
+TTYD_PORT = os.environ.get("AGENTPEEK_TTYD_PORT", "7681")
+TTYD_HTTP = f"http://127.0.0.1:{TTYD_PORT}"
+TTYD_WS = f"ws://127.0.0.1:{TTYD_PORT}"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 # Root of the working-directory picker in the create dialog.

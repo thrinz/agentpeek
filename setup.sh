@@ -4,6 +4,11 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Ports are configurable so agentpeek can coexist with another service (or another
+# WSL distro sharing localhost): AGENTPEEK_PORT=9090 AGENTPEEK_TTYD_PORT=9091 ./setup.sh
+PORT="${AGENTPEEK_PORT:-8090}"
+TTYD_PORT="${AGENTPEEK_TTYD_PORT:-7681}"
+
 # Refuse to run from a Windows drive (/mnt/c, …). DrvFs is slow, has no real Unix
 # permissions/ownership, and breaks the venv, chmod, and systemd units that bake in
 # @REPO@ paths. Set AGENTPEEK_ALLOW_MNT=1 to override (not recommended).
@@ -104,6 +109,7 @@ echo "==> 5/6 systemd user services"
 mkdir -p "$HOME/.config/systemd/user"
 for unit in agentpeek-tmux agentpeek-ttyd agentpeek; do
   sed -e "s|@REPO@|$REPO|g" -e "s|@TTYD@|$TTYD|g" \
+      -e "s|@PORT@|$PORT|g" -e "s|@TTYD_PORT@|$TTYD_PORT|g" \
     "$REPO/systemd/$unit.service" > "$HOME/.config/systemd/user/$unit.service"
 done
 systemctl --user daemon-reload
@@ -111,7 +117,7 @@ systemctl --user enable agentpeek-tmux agentpeek-ttyd agentpeek
 # tmux is a oneshot that holds the session server — start it if down, but never
 # restart it (that kills the tmux server and every session in it).
 systemctl --user start agentpeek-tmux
-# Restart the web app + terminal bridge so a re-run frees ports 8090/7681, picks
+# Restart the web app + terminal bridge so a re-run frees the ports, picks
 # up unit/code changes, and replaces any old instance still holding the port.
 systemctl --user restart agentpeek-ttyd agentpeek
 # Surface a real startup failure instead of silently continuing. Type=simple
@@ -123,9 +129,9 @@ if ! systemctl --user is-active --quiet agentpeek; then
   journalctl --user -u agentpeek --no-pager -n 15 >&2 || true
   # Most failures here are 'address already in use' — show what holds the ports
   # (e.g. a predecessor like webterm, or another user's instance).
-  holder="$(ss -ltnp 2>/dev/null | grep -E ':8090|:7681' || true)"
+  holder="$(ss -ltnp 2>/dev/null | grep -E ":$PORT|:$TTYD_PORT" || true)"
   if [[ -n "$holder" ]]; then
-    echo "    Ports 8090/7681 are already in use by:" >&2
+    echo "    Ports $PORT/$TTYD_PORT are already in use by:" >&2
     echo "$holder" >&2
     echo "    Stop the other listener (e.g. 'systemctl --user disable --now <unit>'), then re-run." >&2
   fi
@@ -196,7 +202,7 @@ echo
 echo "============================================================"
 echo " agentpeek is running — open it at:"
 echo
-echo "     http://localhost:8090     (http://127.0.0.1:8090)"
+echo "     http://localhost:$PORT     (http://127.0.0.1:$PORT)"
 if [[ "$AUTH_ON" == "1" ]]; then
   echo "     (log in with the password you set)"
 else
@@ -213,7 +219,7 @@ echo " it as 'Authorization: Bearer <token>'.)"
 
 echo
 echo "Expose on the tailnet (HTTPS, tailnet-only — never the public internet):"
-echo "    tailscale serve --bg --https=9443 http://127.0.0.1:8090"
+echo "    tailscale serve --bg --https=9443 http://127.0.0.1:$PORT"
 
 if command -v claude >/dev/null 2>&1; then
   echo
@@ -232,7 +238,7 @@ if ! command -v tailscale >/dev/null 2>&1; then
     echo "    installing Tailscale (sudo)…"
     curl -fsSL https://tailscale.com/install.sh | sh
     echo "    installed. Connect this machine:  sudo tailscale up"
-    echo "    then expose agentpeek:            tailscale serve --bg --https=9443 http://127.0.0.1:8090"
+    echo "    then expose agentpeek:            tailscale serve --bg --https=9443 http://127.0.0.1:$PORT"
   else
     echo
     echo "Note: for remote/mobile access, install Tailscale and run 'tailscale up':"
