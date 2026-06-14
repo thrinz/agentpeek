@@ -4,6 +4,21 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Refuse to run from a Windows drive (/mnt/c, …). DrvFs is slow, has no real Unix
+# permissions/ownership, and breaks the venv, chmod, and systemd units that bake in
+# @REPO@ paths. Set AGENTPEEK_ALLOW_MNT=1 to override (not recommended).
+if [[ "$REPO" == /mnt/* && "${AGENTPEEK_ALLOW_MNT:-}" != "1" ]]; then
+  cat >&2 <<MSG
+    !! agentpeek is on a Windows drive ($REPO).
+       Run it from the Linux filesystem instead — clone into your home dir:
+
+           cd ~ && git clone https://github.com/thrinz/agentpeek.git && cd agentpeek && ./setup.sh
+
+       (Set AGENTPEEK_ALLOW_MNT=1 to override, but expect slow I/O and permission issues.)
+MSG
+  exit 1
+fi
+
 echo "==> 0/6 prerequisites"
 # Python 3.10+ is required (fastapi/claude-agent-sdk). We don't upgrade Python —
 # that's a system-level decision — so fail clearly instead of dying inside pip.

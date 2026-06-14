@@ -78,7 +78,11 @@ you need **Tailscale** — `setup.sh` offers to install it for you (or set
 
 ### Install
 
+Clone into your Linux home, **not** a Windows drive — a repo under `/mnt/c/...`
+is slow and lacks real Unix permissions, so `setup.sh` refuses to run there.
+
 ```bash
+cd ~ && git clone https://github.com/thrinz/agentpeek.git && cd agentpeek
 ./setup.sh
 ```
 
