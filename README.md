@@ -75,20 +75,44 @@ there. The folder is stored on the tmux session itself as the
 `@agentpeek_group` session option, so it survives renames; the folder list
 lives in `~/.config/agentpeek/folders.json`.
 
-The create dialog asks for: a folder (required), a **start option** — *Shell*
-(plain shell) or *AI* (types your AI launcher command into the new shell) — and
-a **working directory**, picked from a collapsible tree rooted at `~/projects`
-(`DIRS_ROOT` in `app/main.py`). The session starts cd'd into the chosen
-directory, then runs the launcher if AI was selected. The last-used folder and
-start option are remembered per browser.
+The create dialog asks for: a folder (required), a **Type** — *Shell* (a tmux
+terminal) or *UI* (a Claude chat — see [UI mode](#ui-mode--claude-chat)) — a
+**working directory** picked from a collapsible tree rooted at `~/projects`
+(`DIRS_ROOT` in `app/main.py`), and for Shell type a **start option** (*AI* types
+your launcher command into the new shell, or plain *Shell*).
 
-> **AI mode** types `cds` into the new shell — that's the author's personal
-> Claude Code launcher alias. Change the command in `mux.create()`
+> **AI start option** types `cds` into the new shell — that's the author's
+> personal Claude Code launcher alias. Change the command in `mux.create()`
 > (`app/multiplexer.py`) to whatever starts your agent (`claude`, `aider`, …).
+
+## UI mode — Claude chat
+
+A **UI** session is a chat with the **Claude Agent SDK** running in the chosen
+directory — the same agent as a terminal Claude Code session (it edits files,
+runs bash, uses tools), rendered as a chat instead of a terminal. It needs the
+`claude` CLI installed and a [Claude connection](#claude-connection-for-ui-mode).
+
+- **Streaming** token-by-token with a live cursor; **markdown + GFM tables +
+  code** rendering with copy-code buttons; tool calls and results shown inline
+  (collapsible).
+- **Message queue** — keep typing while the agent works; messages run in order.
+  **Stop** button or **Esc** interrupts the current turn.
+- **`@`** in the input autocompletes files in the working directory to reference.
+- **Model picker** (Opus / Sonnet / Haiku) per session, switchable live;
+  per-turn and running **cost** shown in the header; optional **voice** in
+  (mic → speech-to-text) and out (speak replies).
+- **Always-on background agents** — the agent keeps running if you close the
+  browser; reconnecting (auto-reconnect on drop) reloads the transcript and the
+  conversation resumes (SDK `resume`). Idle agents (no browser, not working) are
+  suspended after 30 min and resume on the next message. Sessions run
+  autonomously (`bypassPermissions`) — same trust model as your terminal.
+
+Registry + transcripts live under `~/.config/agentpeek/` (`ui_sessions.json`,
+`ui_transcripts/`).
 
 ## Claude connection (for UI mode)
 
-UI-mode sessions (coming) run the **Claude Agent SDK**, which authenticates with
+UI-mode sessions run the **Claude Agent SDK**, which authenticates with
 whatever the host's `claude` CLI uses. The **Claude** chip at the bottom of the
 sidebar shows the connection state and, when not connected, opens a sign-in
 panel:

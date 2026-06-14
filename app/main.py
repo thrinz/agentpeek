@@ -12,6 +12,7 @@ Everything is served from one port (default 8090):
 import asyncio
 import getpass
 import json
+import os
 import socket
 import subprocess
 import threading
@@ -20,7 +21,7 @@ from pathlib import Path
 
 import httpx
 import websockets
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -28,6 +29,7 @@ from pydantic import BaseModel
 from . import auth
 from . import claude_auth
 from . import multiplexer as mux
+from . import ui_agent
 
 TTYD_HTTP = "http://127.0.0.1:7681"
 TTYD_WS = "ws://127.0.0.1:7681"
@@ -78,6 +80,11 @@ def _validate_folder_path(path: str) -> str:
 app = FastAPI(title="agentpeek")
 
 
+@app.on_event("startup")
+async def _start_sweeper():
+    ui_agent.manager.start_sweeper()
+
+
 @app.middleware("http")
 async def no_stale_cache(request: Request, call_next):
     """Make browsers revalidate our static files on every load (cheap 304s
@@ -93,7 +100,8 @@ class CreateBody(BaseModel):
     name: str
     group: str           # mandatory — must be one of GROUPS
     cwd: str             # mandatory — a directory inside DIRS_ROOT, not the root itself
-    mode: str = "ai"     # "ai" runs `cds` in the new shell | "shell"
+    mode: str = "ai"     # "ai" runs `cds` in a shell | "shell" | "ui" (Claude chat)
+    model: str | None = None  # UI mode only: "opus" | "sonnet" | "haiku"
 
 
 class RenameBody(BaseModel):
@@ -115,7 +123,10 @@ def _call(fn, *args):
 
 @app.get("/api/sessions")
 def list_sessions():
-    return _call(mux.list_sessions)
+    sessions = _call(mux.list_sessions)
+    for s in sessions:
+        s["kind"] = "shell"
+    return sessions + ui_agent.manager.list()
 
 
 def _resolve_dir(rel: str) -> Path:
@@ -134,14 +145,22 @@ def create_session(body: CreateBody):
     group = body.group.strip().strip("/")
     if group not in _load_folders():
         raise HTTPException(422, f"Unknown folder '{group}'.")
-    if body.mode not in ("shell", "ai"):
-        raise HTTPException(422, "Start option must be 'shell' or 'ai'.")
+    if body.mode not in ("shell", "ai", "ui"):
+        raise HTTPException(422, "Start option must be 'shell', 'ai', or 'ui'.")
     cwd = _resolve_dir(body.cwd)
     if cwd == DIRS_ROOT:
         raise HTTPException(
             422, f"Choose a directory inside {DIRS_ROOT.name}/ — sessions "
                  "cannot be created in the root itself.")
-    _call(mux.create, name, cwd, group, body.mode == "ai")
+    # Names are unique across both shell (tmux) and UI sessions.
+    _call(mux.validate_name, name)
+    if mux.has(name) or ui_agent.manager.exists(name):
+        raise HTTPException(409, f"A session named '{name}' already exists.")
+    if body.mode == "ui":
+        model = body.model if body.model in ui_agent.MODELS else ui_agent.DEFAULT_MODEL
+        ui_agent.manager.create(name, group, cwd, model)
+    else:
+        _call(mux.create, name, cwd, group, body.mode == "ai")
     return {"name": name}
 
 
@@ -201,15 +220,49 @@ def list_dirs(path: str = ""):
     return {"path": path, "dirs": dirs}
 
 
+_FILE_SKIP_DIRS = {"node_modules", "__pycache__", ".git", ".venv", "dist", ".next", "build"}
+
+
+@app.get("/api/ui/files")
+def ui_files(session: str, q: str = ""):
+    """Files under a UI session's working directory, for @-mention autocomplete."""
+    meta = ui_agent.manager.registry.get(session)
+    if not meta:
+        raise HTTPException(404, "No such UI session.")
+    base = Path(meta["cwd"])
+    needle = (q or "").lower()
+    out = []
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _FILE_SKIP_DIRS]
+        for f in files:
+            if f.startswith("."):
+                continue
+            rel = os.path.relpath(os.path.join(root, f), base)
+            if not needle or needle in rel.lower():
+                out.append(rel)
+                if len(out) >= 40:
+                    return {"files": sorted(out)}
+    return {"files": sorted(out)}
+
+
 @app.patch("/api/sessions/{name}")
 def rename_session(name: str, body: RenameBody):
     new = body.new_name.strip()
+    if ui_agent.manager.exists(name):
+        _call(mux.validate_name, new)
+        if mux.has(new) or (new != name and ui_agent.manager.exists(new)):
+            raise HTTPException(409, f"A session named '{new}' already exists.")
+        ui_agent.manager.rename(name, new)
+        return {"name": new}
     _call(mux.rename, name, new)
     return {"name": new}
 
 
 @app.delete("/api/sessions/{name}", status_code=204)
-def kill_session(name: str):
+async def kill_session(name: str):
+    if ui_agent.manager.exists(name):
+        await ui_agent.manager.kill(name)
+        return
     _call(mux.kill, name)
 
 
@@ -339,6 +392,36 @@ async def term_ws(client: WebSocket):
             await client.close()
         except RuntimeError:
             pass  # already closed by the other side
+
+
+@app.websocket("/ui/ws")
+async def ui_ws(client: WebSocket):
+    if not auth.websocket_authorized(client):
+        await client.close(code=1008, reason="Not authenticated")
+        return
+    name = client.query_params.get("session", "")
+    runner = ui_agent.manager.get_runner(name)
+    if runner is None:
+        await client.close(code=1003, reason="No such UI session")
+        return
+    await client.accept()
+    await runner.add_ws(client)
+    try:
+        while True:
+            data = await client.receive_json()
+            kind = data.get("type")
+            if kind == "send":
+                text = (data.get("text") or "").strip()
+                if text:
+                    await runner.enqueue(text)
+            elif kind == "interrupt":
+                await runner.interrupt()
+            elif kind == "set_model":
+                await runner.set_model(data.get("model"))
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        runner.remove_ws(client)
 
 
 @app.get("/term")

@@ -7,6 +7,7 @@ const DEFAULT_FOLDER = 'General';
 
 let sessions = [];
 let active = null;
+let activeKind = null;   // 'shell' | 'ui'
 let config = { folders: [DEFAULT_FOLDER], root: 'projects' };
 let hostInfo = { user: '<user>', host: '<tailscale-hostname>' };
 
@@ -53,6 +54,8 @@ const api = {
   claudeCancel: () => req('POST', '/api/claude/login/cancel'),
   claudeApiKey: (key) => req('POST', '/api/claude/apikey', { key }),
   claudeDisconnect: () => req('POST', '/api/claude/disconnect'),
+  uiFiles: (session, q) =>
+    req('GET', `/api/ui/files?session=${encodeURIComponent(session)}&q=${encodeURIComponent(q)}`),
 };
 
 async function loadConfig() {
@@ -141,7 +144,7 @@ function ask({ title, msg = '', input = null, okLabel = 'OK', danger = false, er
 
 /* ---------- create dialog ---------- */
 
-const cstate = { group: null, mode: 'ai', cwd: null };
+const cstate = { group: null, mode: 'ai', cwd: null, type: 'shell' };
 
 function clearFieldError(el) {
   el.classList.remove('invalid');
@@ -244,12 +247,17 @@ function openCreateDialog() {
   }
   cstate.group = null; // mandatory — the user must pick a folder every time
   cstate.mode = 'ai';
+  cstate.type = 'shell';
   cstate.cwd = null;   // mandatory — a real directory, not the projects root
 
   renderFolderPicker();
   $('c-mode').querySelectorAll('.chip').forEach((b) => {
     b.classList.toggle('selected', b.dataset.mode === cstate.mode);
   });
+  $('c-type').querySelectorAll('.chip').forEach((b) => {
+    b.classList.toggle('selected', b.dataset.type === cstate.type);
+  });
+  $('c-start-field').hidden = cstate.type === 'ui';
 
   // fresh tree rooted at projects/, expanded one level, nothing preselected
   const tree = $('c-dirtree');
@@ -281,14 +289,15 @@ async function submitCreate() {
     return;
   }
   try {
-    await api.create({ name, group: cstate.group, cwd: cstate.cwd, mode: cstate.mode });
+    const mode = cstate.type === 'ui' ? 'ui' : cstate.mode;
+    await api.create({ name, group: cstate.group, cwd: cstate.cwd, mode });
   } catch (e) {
     $('c-error').textContent = e.message;
     return;
   }
   $('cdlg').close();
   await refresh();
-  attach(name);
+  if (cstate.type === 'ui') openChat(name); else attach(name);
 }
 
 /* ---------- session actions ---------- */
@@ -345,18 +354,26 @@ async function killSession(s) {
 
 /* ---------- attach / detach ---------- */
 
+function showView(kind) {
+  const main = $('main');
+  main.classList.toggle('attached', kind === 'shell');
+  main.classList.toggle('chatting', kind === 'ui');
+}
+
 function attach(name) {
-  if (active === name) return;
-  active = name;
+  if (active === name && activeKind === 'shell') return;
+  closeChat();
+  active = name; activeKind = 'shell';
   $('term').src = `/term/?arg=${encodeURIComponent(name)}`;
-  $('main').classList.add('attached');
+  showView('shell');
   render();
 }
 
 function detach() {
-  active = null;
+  closeChat();
+  active = null; activeKind = null;
   $('term').src = 'about:blank';
-  $('main').classList.remove('attached');
+  showView(null);
   render();
 }
 
@@ -368,7 +385,7 @@ function sessionRow(s) {
 
   const dot = document.createElement('span');
   dot.className = 'dot';
-  dot.textContent = s.name === active ? '●' : '○';
+  dot.textContent = s.name === active ? '●' : (s.kind === 'ui' ? '◆' : '○');
   li.appendChild(dot);
 
   const name = document.createElement('span');
@@ -377,11 +394,18 @@ function sessionRow(s) {
   name.title = s.name;
   li.appendChild(name);
 
+  if (s.kind === 'ui') {
+    const tag = document.createElement('span');
+    tag.className = 'kind-tag';
+    tag.textContent = 'chat';
+    li.appendChild(tag);
+  }
+
   if (s.busy) {
     const busy = document.createElement('span');
     busy.className = 'busy';
     busy.textContent = s.foreground;
-    busy.title = `foreground process: ${s.foreground}`;
+    busy.title = `foreground: ${s.foreground}`;
     li.appendChild(busy);
   }
 
@@ -395,7 +419,7 @@ function sessionRow(s) {
   });
   li.appendChild(menuBtn);
 
-  li.addEventListener('click', () => attach(s.name));
+  li.addEventListener('click', () => (s.kind === 'ui' ? openChat(s.name) : attach(s.name)));
   return li;
 }
 
@@ -492,12 +516,13 @@ function showMenu(items, anchor) {
 }
 
 function openSessionMenu(s, anchor) {
-  showMenu([
-    ['Rename…', () => renameSession(s), ''],
-    ['Copy SSH attach command', () => copyText(sshAttachCommand(s.name)), ''],
-    ['Copy local attach command', () => copyText(s.attach_command), ''],
-    ['Terminate…', () => killSession(s), 'danger'],
-  ], anchor);
+  const items = [['Rename…', () => renameSession(s), '']];
+  if (s.kind !== 'ui') {
+    items.push(['Copy SSH attach command', () => copyText(sshAttachCommand(s.name)), '']);
+    items.push(['Copy local attach command', () => copyText(s.attach_command), '']);
+  }
+  items.push(['Terminate…', () => killSession(s), 'danger']);
+  showMenu(items, anchor);
 }
 
 function openFolderMenu(path, anchor) {
@@ -551,6 +576,413 @@ function flash(msg) {
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 1500);
 }
+
+/* ---------- UI-mode chat ---------- */
+
+let chatWs = null;
+let chatSession = null;
+let chatReconnectTimer = null;
+let chatReconnectDelay = 1000;
+let streamingEl = null;
+let chatTotalCost = 0;
+let chatModel = 'opus';
+let ttsOn = false;
+let recog = null;
+
+/* --- minimal, safe markdown renderer (paragraphs, code, lists, GFM tables) --- */
+
+function escHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function inlineMd(s) {
+  const codes = [];
+  s = s.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return ` ${codes.length - 1} `; });
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, u) => {
+    const safe = /^(https?:|mailto:|\/)/i.test(u) ? u : '#';
+    return `<a href="${safe}" target="_blank" rel="noopener">${t}</a>`;
+  });
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
+  s = s.replace(/(^|[\s(])_([^_\s][^_]*)_/g, '$1<em>$2</em>');
+  s = s.replace(/ (\d+) /g, (m, i) => `<code>${codes[+i]}</code>`);
+  return s;
+}
+
+function splitRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+}
+
+function isTableHead(lines, i) {
+  return /\|/.test(lines[i]) && i + 1 < lines.length
+    && /-/.test(lines[i + 1]) && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[i + 1]);
+}
+
+function renderMarkdown(src) {
+  const lines = escHtml(src || '').split('\n');
+  const n = lines.length;
+  let html = '', i = 0;
+  while (i < n) {
+    const line = lines[i];
+    const fence = line.match(/^\s*(```|~~~)(.*)$/);
+    if (fence) {
+      const marker = fence[1];
+      i++;
+      const buf = [];
+      while (i < n && !lines[i].trimStart().startsWith(marker)) { buf.push(lines[i]); i++; }
+      i++;
+      html += `<div class="code-wrap"><button class="copy-code" title="Copy code">copy</button>`
+        + `<pre><code>${buf.join('\n')}</code></pre></div>`;
+      continue;
+    }
+    if (isTableHead(lines, i)) {
+      const header = splitRow(lines[i]); i += 2;
+      const rows = [];
+      while (i < n && /\|/.test(lines[i]) && lines[i].trim() !== '') { rows.push(splitRow(lines[i])); i++; }
+      html += '<table><thead><tr>' + header.map((c) => `<th>${inlineMd(c)}</th>`).join('')
+        + '</tr></thead><tbody>'
+        + rows.map((r) => '<tr>' + r.map((c) => `<td>${inlineMd(c)}</td>`).join('') + '</tr>').join('')
+        + '</tbody></table>';
+      continue;
+    }
+    const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
+    if (h) { html += `<h${h[1].length}>${inlineMd(h[2])}</h${h[1].length}>`; i++; continue; }
+    if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
+      const ordered = /^\s*\d+\.\s/.test(line);
+      html += ordered ? '<ol>' : '<ul>';
+      while (i < n && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) {
+        html += `<li>${inlineMd(lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, ''))}</li>`; i++;
+      }
+      html += ordered ? '</ol>' : '</ul>';
+      continue;
+    }
+    if (line.trim() === '') { i++; continue; }
+    const para = [];
+    while (i < n && lines[i].trim() !== ''
+        && !/^\s*(```|~~~|#{1,6}\s|[-*+]\s|\d+\.\s)/.test(lines[i]) && !isTableHead(lines, i)) {
+      para.push(lines[i]); i++;
+    }
+    html += `<p>${inlineMd(para.join('<br>'))}</p>`;
+  }
+  return html;
+}
+
+/* --- message elements --- */
+
+function bubble(cls, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + cls;
+  el._raw = text;
+  const md = document.createElement('div');
+  md.className = 'md';
+  md.innerHTML = renderMarkdown(text);
+  el.appendChild(md);
+  const copy = document.createElement('button');
+  copy.className = 'copy-msg'; copy.title = 'Copy message'; copy.textContent = '⧉';
+  copy.addEventListener('click', () => copyText(el._raw));
+  el.appendChild(copy);
+  return el;
+}
+
+function collapsible(cls, label, text, asMd) {
+  const d = document.createElement('details');
+  d.className = 'msg ' + cls;
+  const s = document.createElement('summary');
+  s.textContent = label;
+  d.appendChild(s);
+  const body = document.createElement('div');
+  body.className = 'md';
+  body.innerHTML = asMd ? renderMarkdown(text) : `<pre>${escHtml(text)}</pre>`;
+  d.appendChild(body);
+  return d;
+}
+
+function toolUseEl(ev) {
+  let inp = '';
+  try { inp = JSON.stringify(ev.input, null, 2); } catch { inp = String(ev.input); }
+  const d = collapsible('tool-use', `⚙ ${ev.name}`, inp.slice(0, 4000), false);
+  return d;
+}
+
+function resultEl(ev) {
+  const el = document.createElement('div');
+  el.className = 'msg result' + (ev.is_error ? ' err' : '');
+  const cost = typeof ev.cost === 'number' ? ` · $${ev.cost.toFixed(4)}` : '';
+  el.textContent = (ev.is_error ? '⚠ ended with error' : 'done') + cost;
+  return el;
+}
+
+function simpleMsg(cls, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + cls;
+  el.textContent = text;
+  return el;
+}
+
+/* --- rendering / streaming --- */
+
+function renderChatEvent(ev, scroll) {
+  const log = $('chat-log');
+  let el = null;
+  if (ev.role === 'user') el = bubble('user', ev.text);
+  else if (ev.role === 'assistant') {
+    el = bubble('assistant', ev.text);
+    if (ttsOn) speak(ev.text);
+  } else if (ev.role === 'thinking') el = collapsible('thinking', 'Thinking', ev.text, true);
+  else if (ev.role === 'tool_use') el = toolUseEl(ev);
+  else if (ev.role === 'tool_result') el = collapsible('tool-result', 'Tool result', ev.text, false);
+  else if (ev.role === 'result') {
+    el = resultEl(ev);
+    if (typeof ev.cost === 'number') { chatTotalCost += ev.cost; updateCost(); }
+  } else if (ev.role === 'error') el = simpleMsg('error', ev.text);
+  if (el) log.appendChild(el);
+  if (scroll) maybeScroll();
+}
+
+function appendDelta(text) {
+  if (!streamingEl) {
+    streamingEl = document.createElement('div');
+    streamingEl.className = 'msg assistant streaming';
+    streamingEl._raw = '';
+    const md = document.createElement('div'); md.className = 'md';
+    streamingEl.appendChild(md);
+    const cur = document.createElement('span'); cur.className = 'cursor'; cur.textContent = '▋';
+    streamingEl.appendChild(cur);
+    $('chat-log').appendChild(streamingEl);
+  }
+  streamingEl._raw += text;
+  streamingEl.querySelector('.md').innerHTML = renderMarkdown(streamingEl._raw);
+  maybeScroll();
+}
+
+function clearStreaming() {
+  if (streamingEl) { streamingEl.remove(); streamingEl = null; }
+}
+
+/* --- scroll --- */
+
+function nearBottom() {
+  const log = $('chat-log');
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+}
+function scrollChatBottom() {
+  const log = $('chat-log');
+  log.scrollTop = log.scrollHeight;
+  $('chat-jump').hidden = true;
+}
+function maybeScroll() {
+  if (nearBottom()) scrollChatBottom();
+  else $('chat-jump').hidden = false;
+}
+
+/* --- status / cost / connection --- */
+
+function setChatBusy(busy) {
+  $('chat-stop').hidden = !busy;
+  $('chat').classList.toggle('busy', !!busy);
+}
+function updateCost() { $('chat-cost').textContent = '$' + chatTotalCost.toFixed(3); }
+function setConn(state) {
+  const dot = $('chat-conn');
+  dot.classList.remove('open', 'connecting', 'closed');
+  dot.classList.add(state);
+}
+
+/* --- websocket --- */
+
+function handleChatMsg(m) {
+  if (m.type === 'history') {
+    $('chat-log').textContent = '';
+    streamingEl = null;
+    chatTotalCost = 0;
+    for (const ev of m.events) renderChatEvent(ev, false);
+    updateCost();
+    scrollChatBottom();
+  } else if (m.type === 'delta') {
+    appendDelta(m.text);
+  } else if (m.type === 'event') {
+    clearStreaming();
+    renderChatEvent(m.event, true);
+  } else if (m.type === 'status') {
+    setChatBusy(m.busy);
+    if (m.model && m.model !== chatModel) { chatModel = m.model; $('chat-model').value = m.model; }
+  }
+}
+
+function connectChat(name) {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ui/ws?session=${encodeURIComponent(name)}`);
+  chatWs = ws;
+  setConn('connecting');
+  ws.onopen = () => { chatReconnectDelay = 1000; setConn('open'); };
+  ws.onmessage = (e) => {
+    if (chatWs !== ws || activeKind !== 'ui') return;
+    try { handleChatMsg(JSON.parse(e.data)); } catch { /* ignore */ }
+  };
+  ws.onerror = () => { try { ws.close(); } catch { /* ignore */ } };
+  ws.onclose = () => {
+    if (chatWs !== ws) return;
+    setConn('closed');
+    if (!ws._intentional && activeKind === 'ui' && chatSession === name) {
+      chatReconnectTimer = setTimeout(() => connectChat(name), chatReconnectDelay);
+      chatReconnectDelay = Math.min(chatReconnectDelay * 2, 15000);
+    }
+  };
+}
+
+function openChat(name) {
+  if (active === name && activeKind === 'ui') return;
+  $('term').src = 'about:blank';
+  closeChat();
+  active = name; activeKind = 'ui'; chatSession = name;
+  showView('ui');
+  $('chat-title').textContent = name;
+  $('chat-log').textContent = '';
+  chatTotalCost = 0; updateCost();
+  setChatBusy(false);
+  const s = sessions.find((x) => x.name === name && x.kind === 'ui');
+  chatModel = (s && s.model) || 'opus';
+  $('chat-model').value = chatModel;
+  connectChat(name);
+  render();
+}
+
+function closeChat() {
+  if (chatReconnectTimer) { clearTimeout(chatReconnectTimer); chatReconnectTimer = null; }
+  if (chatWs) { chatWs._intentional = true; try { chatWs.close(); } catch { /* ignore */ } chatWs = null; }
+  streamingEl = null;
+}
+
+/* --- send / stop / model --- */
+
+function autoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+}
+
+function chatSend() {
+  const ta = $('chat-input');
+  const text = ta.value.trim();
+  if (!text) return;
+  if (!chatWs || chatWs.readyState !== WebSocket.OPEN) { flash('Reconnecting — try again'); return; }
+  chatWs.send(JSON.stringify({ type: 'send', text }));
+  ta.value = ''; autoGrow(ta); hideMentions();
+  scrollChatBottom();
+}
+
+function chatStop() {
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify({ type: 'interrupt' }));
+  }
+}
+
+/* --- @-mention file autocomplete --- */
+
+let mentionItems = [], mentionIndex = 0, mentionStart = -1;
+const mentionActive = () => !$('chat-mentions').hidden;
+
+async function onChatInput() {
+  autoGrow($('chat-input'));
+  const ta = $('chat-input');
+  const upto = ta.value.slice(0, ta.selectionStart);
+  const m = upto.match(/@([^\s@]*)$/);
+  if (!m || !chatSession) { hideMentions(); return; }
+  mentionStart = ta.selectionStart - m[0].length;
+  try {
+    const { files } = await api.uiFiles(chatSession, m[1]);
+    mentionItems = files.slice(0, 8);
+    if (!mentionItems.length) { hideMentions(); return; }
+    mentionIndex = 0;
+    showMentions();
+  } catch { hideMentions(); }
+}
+
+function showMentions() {
+  const box = $('chat-mentions');
+  box.textContent = '';
+  mentionItems.forEach((f, idx) => {
+    const row = document.createElement('div');
+    row.className = 'mention' + (idx === mentionIndex ? ' sel' : '');
+    row.textContent = f;
+    row.addEventListener('mousedown', (e) => { e.preventDefault(); pickMention(f); });
+    box.appendChild(row);
+  });
+  box.hidden = false;
+}
+function renderMentionSel() {
+  [...$('chat-mentions').children].forEach((r, idx) => r.classList.toggle('sel', idx === mentionIndex));
+}
+function hideMentions() { $('chat-mentions').hidden = true; }
+function pickMention(file) {
+  const ta = $('chat-input');
+  const pos = ta.selectionStart;
+  ta.value = ta.value.slice(0, mentionStart) + '@' + file + ' ' + ta.value.slice(pos);
+  const np = mentionStart + file.length + 2;
+  ta.setSelectionRange(np, np);
+  hideMentions(); autoGrow(ta); ta.focus();
+}
+
+/* --- voice in / out --- */
+
+function setupRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { $('chat-mic').style.display = 'none'; return; }
+  recog = new SR();
+  recog.lang = 'en-US';
+  recog.interimResults = false;
+  recog.onresult = (e) => {
+    const t = Array.from(e.results).map((r) => r[0].transcript).join(' ');
+    const ta = $('chat-input');
+    ta.value = (ta.value + ' ' + t).trim();
+    autoGrow(ta);
+  };
+  recog.onend = () => $('chat-mic').classList.remove('on');
+}
+function speak(text) {
+  try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } catch { /* ignore */ }
+}
+
+/* --- listeners --- */
+
+$('chat-send').addEventListener('click', chatSend);
+$('chat-stop').addEventListener('click', chatStop);
+$('chat-jump').addEventListener('click', scrollChatBottom);
+$('chat-log').addEventListener('scroll', () => { if (nearBottom()) $('chat-jump').hidden = true; });
+$('chat-log').addEventListener('click', (e) => {
+  if (e.target.classList.contains('copy-code')) {
+    const code = e.target.parentElement.querySelector('code');
+    if (code) copyText(code.textContent);
+  }
+});
+$('chat-model').addEventListener('change', () => {
+  chatModel = $('chat-model').value;
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify({ type: 'set_model', model: chatModel }));
+  }
+});
+$('chat-tts').addEventListener('click', () => {
+  ttsOn = !ttsOn;
+  $('chat-tts').classList.toggle('on', ttsOn);
+  if (!ttsOn) try { speechSynthesis.cancel(); } catch { /* ignore */ }
+});
+$('chat-mic').addEventListener('click', () => {
+  if (!recog) return;
+  if ($('chat-mic').classList.contains('on')) recog.stop();
+  else { try { recog.start(); $('chat-mic').classList.add('on'); } catch { /* ignore */ } }
+});
+$('chat-input').addEventListener('input', onChatInput);
+$('chat-input').addEventListener('keydown', (e) => {
+  if (mentionActive()) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); mentionIndex = (mentionIndex + 1) % mentionItems.length; renderMentionSel(); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); mentionIndex = (mentionIndex - 1 + mentionItems.length) % mentionItems.length; renderMentionSel(); return; }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMention(mentionItems[mentionIndex]); return; }
+    if (e.key === 'Escape') { e.preventDefault(); hideMentions(); return; }
+  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSend(); }
+  else if (e.key === 'Escape') { e.preventDefault(); chatStop(); }
+});
+setupRecognition();
 
 /* ---------- Claude connection ---------- */
 
@@ -691,6 +1123,14 @@ $('c-mode').querySelectorAll('.chip').forEach((b) => {
     $('c-mode').querySelectorAll('.chip').forEach((c) => c.classList.remove('selected'));
     b.classList.add('selected');
     cstate.mode = b.dataset.mode;
+  });
+});
+$('c-type').querySelectorAll('.chip').forEach((b) => {
+  b.addEventListener('click', () => {
+    $('c-type').querySelectorAll('.chip').forEach((c) => c.classList.remove('selected'));
+    b.classList.add('selected');
+    cstate.type = b.dataset.type;
+    $('c-start-field').hidden = cstate.type === 'ui';
   });
 });
 $('dlg-cancel').addEventListener('click', () => $('dlg').close('cancel'));

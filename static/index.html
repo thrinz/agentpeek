@@ -31,6 +31,29 @@
       <p>Create a session or pick one from the sidebar.</p>
     </div>
     <iframe id="term" title="terminal" allow="clipboard-read; clipboard-write"></iframe>
+    <div id="chat" hidden>
+      <div id="chat-head">
+        <span id="chat-title"></span>
+        <span class="spacer"></span>
+        <select id="chat-model" title="Model">
+          <option value="opus">Opus 4.8</option>
+          <option value="sonnet">Sonnet 4.6</option>
+          <option value="haiku">Haiku 4.5</option>
+        </select>
+        <span id="chat-cost" title="Total cost this session">$0.000</span>
+        <button id="chat-tts" class="icon-btn" title="Speak replies aloud">🔊</button>
+        <span id="chat-conn" class="conn-dot" title="Connection">●</span>
+      </div>
+      <div id="chat-log"></div>
+      <button id="chat-jump" hidden>↓ Latest</button>
+      <div id="chat-bar">
+        <button id="chat-mic" class="icon-btn" title="Voice input">🎤</button>
+        <textarea id="chat-input" rows="1" placeholder="Message the agent…  (Enter to send · Shift+Enter newline · Esc to stop · @ to reference files)"></textarea>
+        <button id="chat-stop" hidden>Stop</button>
+        <button id="chat-send">Send</button>
+        <div id="chat-mentions" hidden></div>
+      </div>
+    </div>
   </main>
 
   <dialog id="cdlg">
@@ -45,6 +68,13 @@
         <div id="c-folders"></div>
       </div>
       <div class="field">
+        <span class="field-label">Type</span>
+        <div id="c-type" class="chips">
+          <button type="button" class="chip selected" data-type="shell">Shell (terminal)</button>
+          <button type="button" class="chip" data-type="ui">UI (Claude chat)</button>
+        </div>
+      </div>
+      <div class="field" id="c-start-field">
         <span class="field-label">Start with</span>
         <div id="c-mode" class="chips">
           <button type="button" class="chip selected" data-mode="ai">AI (cds)</button>
