@@ -1231,6 +1231,11 @@ $('collapse-btn').addEventListener('click', () => setSidebar(true));
 $('expand-btn').addEventListener('click', () => setSidebar(false));
 if (localStorage.getItem('agentpeek-sidebar') === 'collapsed') setSidebar(true);
 
+$('theme-toggle').addEventListener('click', () => {
+  const light = document.documentElement.classList.toggle('light');
+  localStorage.setItem('agentpeek-theme', light ? 'light' : 'dark');
+});
+
 $('create-btn').addEventListener('click', openCreateDialog);
 $('add-folder-btn').addEventListener('click', () => addFolder(null));
 $('c-ok').addEventListener('click', submitCreate);
