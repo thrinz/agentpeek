@@ -501,7 +501,8 @@ dialog menu button {
   border-radius: 6px; padding: 4px 6px; font-size: 12px;
 }
 #chat-cost { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
-.icon-btn { background: transparent; border: 0; cursor: pointer; font-size: 15px; opacity: .55; padding: 2px 4px; }
+.icon-btn { background: transparent; border: 0; cursor: pointer; opacity: .55; padding: 2px 4px;
+  display: inline-flex; align-items: center; color: var(--fg-dim); }
 .icon-btn:hover { opacity: 1; }
 .icon-btn.on { opacity: 1; filter: drop-shadow(0 0 4px var(--accent)); }
 .conn-dot { font-size: 9px; color: var(--fg-dim); }

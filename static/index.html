@@ -16,7 +16,7 @@
 <body>
   <aside id="sidebar">
     <div id="sidebar-top">
-      <button id="create-btn">＋ Create Session</button>
+      <button id="create-btn">+ Create Session</button>
       <button id="add-folder-btn" title="New folder">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
       </button>
@@ -48,7 +48,7 @@
           <option value="haiku">Haiku 4.5</option>
         </select>
         <span id="chat-cost" title="Total cost this session">$0.000</span>
-        <button id="chat-tts" class="icon-btn" title="Speak replies aloud">🔊</button>
+        <button id="chat-tts" class="icon-btn" title="Speak replies aloud"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
         <span id="chat-conn" class="conn-dot" title="Connection">●</span>
       </div>
       <div id="chat-log"></div>
@@ -56,8 +56,8 @@
       <div id="chat-attachments" hidden></div>
       <div id="chat-bar">
         <input id="chat-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
-        <button id="chat-attach" class="icon-btn" title="Attach image">📎</button>
-        <button id="chat-mic" class="icon-btn" title="Voice input">🎤</button>
+        <button id="chat-attach" class="icon-btn" title="Attach image"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+        <button id="chat-mic" class="icon-btn" title="Voice input"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
         <textarea id="chat-input" rows="1" placeholder="Message the agent…  (Enter to send · Shift+Enter newline · Esc to stop · @ files · paste/drop images)"></textarea>
         <button id="chat-stop" hidden>Stop</button>
         <button id="chat-send">Send</button>
