@@ -25,6 +25,7 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import auth
 from . import multiplexer as mux
 
 TTYD_HTTP = "http://127.0.0.1:7681"
@@ -294,6 +295,9 @@ _OSC52_SHIM = b"""<script>
 
 @app.websocket("/term/ws")
 async def term_ws(client: WebSocket):
+    if not auth.websocket_authorized(client):
+        await client.close(code=1008, reason="Not authenticated")
+        return
     qs = client.scope.get("query_string", b"").decode()
     url = f"{TTYD_WS}/term/ws" + (f"?{qs}" if qs else "")
     try:
@@ -358,5 +362,8 @@ async def term_http(path: str, request: Request):
         content = content.replace(b"<script", _OSC52_SHIM + b"<script", 1)
     return Response(content=content, status_code=r.status_code, headers=headers)
 
+
+# Auth middleware + /login routes must be registered before the catch-all mount.
+auth.install_auth(app)
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

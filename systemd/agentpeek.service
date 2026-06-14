@@ -4,6 +4,9 @@ After=agentpeek-ttyd.service
 
 [Service]
 WorkingDirectory=@REPO@
+# Optional secrets (AGENTPEEK_PASSWORD_HASH / AGENTPEEK_TOKEN / AGENTPEEK_SECRET).
+# The leading '-' makes the file optional, so this is a no-op until you create it.
+EnvironmentFile=-%h/.config/agentpeek/agentpeek.env
 ExecStart=@REPO@/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8090
 Restart=on-failure
 RestartSec=2

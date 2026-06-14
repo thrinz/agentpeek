@@ -88,11 +88,30 @@ start option are remembered per browser.
 
 ## Security model
 
-The app itself has **no authentication**. It binds to `127.0.0.1` only and is
-reachable remotely solely through Tailscale (`tailscale serve`), so access
-control is delegated entirely to tailnet membership/ACLs. This is the
-explicitly accepted posture for a single-operator tool; do not port-forward
-8090/7681 to any public interface.
+agentpeek binds to `127.0.0.1` only and is reachable remotely solely through
+Tailscale (`tailscale serve`), so the baseline access control is tailnet
+membership/ACLs. Do not port-forward 8090/7681 to any public interface.
+
+**Optional key-based login** (same scheme as filepeek) adds a second factor on
+top of the tailnet. It turns on automatically once you set either env var in
+`~/.config/agentpeek/agentpeek.env` (read by the systemd unit):
+
+```bash
+# generate a password hash
+.venv/bin/python -m app hash-password
+# then create ~/.config/agentpeek/agentpeek.env with:
+AGENTPEEK_PASSWORD_HASH=pbkdf2_sha256$200000$....   # browser login
+AGENTPEEK_TOKEN=<random-string>                      # scripted access: Authorization: Bearer <token>
+AGENTPEEK_SECRET=<random-string>                     # keeps sessions valid across restarts
+# restart: systemctl --user restart agentpeek
+```
+
+With auth on, the browser logs in at `/login` (PBKDF2-checked password →
+signed, HttpOnly session cookie, 7-day TTL, per-IP lockout after repeated
+failures) and the terminal WebSocket is gated on the same cookie. With neither
+var set, the app is open — the accepted posture for a purely local,
+single-operator setup. Turning it on is **recommended** once UI mode can drive
+agents that edit files over the tailnet.
 
 ## Manual fallback (no web UI)
 
