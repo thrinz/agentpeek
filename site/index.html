@@ -255,8 +255,10 @@
 # reach it on your tailnet (HTTPS, tailnet-only):
 tailscale serve --bg --https=9443 http://127.0.0.1:8090</code></pre>
   <p>Open <code>http://localhost:8090</code> — on WSL2 that works straight from your Windows browser.
-     <code>setup.sh</code> installs ttyd, a Python venv, and three systemd user services that auto-start
-     on boot. Needs <code>tmux</code> and the <code>claude</code> CLI for UI mode.</p>
+     On Debian/Ubuntu, <code>setup.sh</code> installs the prerequisites for you (tmux, ttyd, a Python
+     venv) and the systemd services. You'll need <strong>systemd enabled</strong> on WSL2 and the
+     <code>claude</code> CLI for UI mode — see the
+     <a href="https://github.com/thrinz/agentpeek#prerequisites">full prerequisites</a>.</p>
 
   <h2>Frequently asked questions</h2>
   <details><summary>Which AI agents does it run?</summary>

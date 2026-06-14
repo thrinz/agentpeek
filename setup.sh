@@ -4,6 +4,35 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+echo "==> 0/5 prerequisites"
+# Packages agentpeek needs that a fresh Debian/Ubuntu (incl. WSL2) often lacks.
+need=()
+command -v tmux >/dev/null 2>&1 || need+=(tmux)
+command -v curl >/dev/null 2>&1 || need+=(curl)
+python3 -c 'import ensurepip' 2>/dev/null || need+=(python3-venv)
+if [[ ${#need[@]} -gt 0 ]]; then
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "    installing (sudo): ${need[*]}"
+    sudo apt-get update -qq && sudo apt-get install -y "${need[@]}"
+  else
+    echo "    !! missing: ${need[*]} — install them with your package manager, then re-run." >&2
+    exit 1
+  fi
+fi
+# The user services need systemd. On WSL2 it must be enabled explicitly.
+if [[ ! -d /run/systemd/system ]]; then
+  cat >&2 <<'MSG'
+    !! systemd is not running — agentpeek's services need it.
+       On WSL2: add the following to /etc/wsl.conf, then run `wsl --shutdown`
+       in Windows (PowerShell) and reopen the terminal:
+
+           [boot]
+           systemd=true
+
+MSG
+  exit 1
+fi
+
 echo "==> 1/5 ttyd"
 if ! command -v ttyd >/dev/null 2>&1; then
   mkdir -p "$HOME/.local/bin"
@@ -47,3 +76,16 @@ echo
 echo "agentpeek is up:  http://127.0.0.1:8090"
 echo "Expose on the tailnet (HTTPS, tailnet-only):"
 echo "    tailscale serve --bg --https=9443 http://127.0.0.1:8090"
+
+# These can't be auto-installed safely — flag them if missing.
+if ! command -v claude >/dev/null 2>&1; then
+  echo
+  echo "Note: UI (Claude chat) mode needs the 'claude' CLI, which isn't installed."
+  echo "      Install Claude Code (e.g. npm install -g @anthropic-ai/claude-code, or see"
+  echo "      https://docs.claude.com/claude-code), then sign in from agentpeek's Claude chip."
+fi
+if ! command -v tailscale >/dev/null 2>&1; then
+  echo
+  echo "Note: for remote/mobile access, install Tailscale and run 'tailscale up':"
+  echo "      curl -fsSL https://tailscale.com/install.sh | sh"
+fi

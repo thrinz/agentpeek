@@ -49,15 +49,43 @@ same-origin, which keeps clipboard access and `tailscale serve` simple.
 
 ## Setup
 
+### Prerequisites
+
+On a fresh **Debian/Ubuntu (incl. WSL2)**, `setup.sh` installs the OS packages it
+needs for you (`tmux`, `curl`, `python3-venv`) via `sudo apt`, plus `ttyd` and the
+Python deps — so it's mostly one command. Two things it can't do for you:
+
+- **systemd must be enabled** — the services run under it. On WSL2, add this to
+  `/etc/wsl.conf`, then run `wsl --shutdown` in Windows (PowerShell) and reopen
+  your terminal:
+  ```ini
+  [boot]
+  systemd=true
+  ```
+  Ubuntu 24.04 on recent WSL enables systemd by default; `setup.sh` checks and
+  tells you if it's missing.
+- **The `claude` CLI** — only for **UI (chat) mode**. Install Claude Code
+  (`npm install -g @anthropic-ai/claude-code`, or see the Claude Code docs), then
+  sign in from agentpeek's **Claude** chip (or run `claude` once). Shell mode
+  needs nothing extra.
+
+Also: you need `git` to clone the repo and Python **3.10+** (already on Ubuntu
+22.04/24.04); the bundled `ttyd` binary is **x86_64**. For remote/mobile access,
+install **Tailscale** (`curl -fsSL https://tailscale.com/install.sh | sh`).
+
+### Install
+
 ```bash
 ./setup.sh
 ```
 
-This installs `ttyd` (to `~/.local/bin` if missing), creates `.venv` and
-installs Python deps, sources `conf/agentpeek.tmux.conf` from `~/.tmux.conf`,
-installs and enables three systemd **user** services
-(`agentpeek-tmux`, `agentpeek-ttyd`, `agentpeek`), and enables linger so
-everything starts when the WSL2 instance boots. Re-running it is safe.
+It installs the apt prerequisites (`tmux`/`curl`/`python3-venv`) and `ttyd` if
+missing, creates `.venv` and installs the Python deps (including
+`claude-agent-sdk`), sources `conf/agentpeek.tmux.conf` from `~/.tmux.conf`,
+installs and enables three systemd **user** services (`agentpeek-tmux`,
+`agentpeek-ttyd`, `agentpeek`), and enables linger so everything starts at WSL2
+boot. It's idempotent — safe to re-run — and prints a reminder if the `claude`
+CLI or Tailscale aren't installed.
 
 Expose on the tailnet (HTTPS, tailnet-only — never the public internet):
 
