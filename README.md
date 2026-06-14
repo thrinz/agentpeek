@@ -3,12 +3,13 @@
   <b>agentpeek</b>
 </p>
 
-<h1 align="center">Run your AI agents from the browser</h1>
+<h1 align="center">Persistent Claude Code sessions in your browser</h1>
 
 <p align="center">
-  A self-hosted web UI for creating and managing <b>persistent terminal
-  sessions</b> on a Linux/WSL2 box — built for driving long-running AI coding
-  agents like Claude Code from anywhere, then leaving them running.
+  agentpeek is the free, self-hosted <b>browser control panel for Claude Code</b>.
+  Start a session on your Linux/WSL2 box, drive it as a terminal or a chat, and
+  reach it from any browser over your tailnet — it keeps working when you close
+  the laptop.
 </p>
 
 You start Claude Code (or any shell) in a session, close the laptop, and it
