@@ -30,6 +30,8 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
+from . import claude_auth
+
 CONFIG_DIR = Path.home() / ".config" / "agentpeek"
 REGISTRY_FILE = CONFIG_DIR / "ui_sessions.json"
 TRANSCRIPT_DIR = CONFIG_DIR / "ui_transcripts"
@@ -95,10 +97,13 @@ class AgentRunner:
     async def _ensure_client(self):
         if self.client is not None:
             return
+        # On Bedrock/Vertex the opus/sonnet/haiku aliases don't resolve — let
+        # Claude Code use the model configured in its env (ANTHROPIC_MODEL).
+        model = None if claude_auth.backend() else resolve_model(self.model)
         opts = ClaudeAgentOptions(
             cwd=self.cwd,
             permission_mode=PERMISSION_MODE,
-            model=resolve_model(self.model),
+            model=model,
             resume=self.session_id,
             system_prompt={"type": "preset", "preset": "claude_code"},
             include_partial_messages=True,  # token-level streaming
@@ -209,6 +214,8 @@ class AgentRunner:
                 pass
 
     async def set_model(self, alias):
+        if claude_auth.backend():  # cloud backend pins its own model via env
+            return
         if alias not in MODELS or alias == self.model:
             return
         self.model = alias

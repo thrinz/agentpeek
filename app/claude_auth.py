@@ -38,6 +38,21 @@ ENV_FILE = CONFIG_DIR / "agentpeek.env"
 _OAUTH_KEY = "CLAUDE_CODE_OAUTH_TOKEN"
 _APIKEY = "ANTHROPIC_API_KEY"
 
+
+def _on(var: str) -> bool:
+    return os.environ.get(var, "").strip().lower() not in ("", "0", "false", "no")
+
+
+def backend() -> "str | None":
+    """The cloud backend Claude Code is configured to use, or None for the
+    first-party Anthropic API. These env vars take precedence over any
+    API key / OAuth token in the agent's environment."""
+    if _on("CLAUDE_CODE_USE_BEDROCK"):
+        return "bedrock"
+    if _on("CLAUDE_CODE_USE_VERTEX"):
+        return "vertex"
+    return None
+
 # Strip ANSI CSI / OSC / a few two-char escapes so we can scan the text.
 _ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[=>78]")
 _URL_RE = re.compile(r"https://claude\.com/\S*oauth/authorize\S*")
@@ -72,6 +87,13 @@ def _debug_dump(text: str) -> None:
 
 def claude_status() -> dict:
     """Whether UI-mode agents can authenticate to Claude right now."""
+    b = backend()
+    if b == "bedrock":
+        return {"connected": True, "method": "bedrock",
+                "detail": "Using AWS Bedrock (CLAUDE_CODE_USE_BEDROCK) with your AWS credentials."}
+    if b == "vertex":
+        return {"connected": True, "method": "vertex",
+                "detail": "Using Google Vertex AI (CLAUDE_CODE_USE_VERTEX) with your GCP credentials."}
     if os.environ.get(_OAUTH_KEY):
         return {"connected": True, "method": "oauth_token",
                 "detail": "Connected with a saved Claude subscription token."}

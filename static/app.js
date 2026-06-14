@@ -601,6 +601,13 @@ let recog = null;
 // Cost is only meaningful with an API key; subscription (Pro/Max) usage is
 // covered by the plan, so we hide the $ figure unless method === 'api_key'.
 let costVisible = false;
+// On Bedrock/Vertex, the model is pinned via env and the alias picker / sign-in
+// flow don't apply — hide them.
+let cloudBackend = false;
+
+function applyBackendUI() {
+  $('chat-model').style.display = cloudBackend ? 'none' : '';
+}
 
 /* --- minimal, safe markdown renderer (paragraphs, code, lists, GFM tables) --- */
 
@@ -859,6 +866,7 @@ function openChat(name) {
   const s = sessions.find((x) => x.name === name && x.kind === 'ui');
   chatModel = (s && s.model) || 'opus';
   $('chat-model').value = chatModel;
+  applyBackendUI();
   connectChat(name);
   render();
 }
@@ -1107,7 +1115,9 @@ async function refreshClaude() {
     const st = await api.claudeStatus();
     setClaudeChip(st);
     costVisible = !!(st && st.method === 'api_key');
+    cloudBackend = !!(st && (st.method === 'bedrock' || st.method === 'vertex'));
     applyCostVisibility();
+    applyBackendUI();
     return st;
   } catch { return null; }
 }
@@ -1116,8 +1126,11 @@ function clRenderState(st) {
   $('cl-status').textContent = st ? st.detail : '';
   $('cl-error').textContent = '';
   $('cl-code').value = ''; $('cl-key').value = ''; $('cl-url').value = '';
+  const cloud = st && (st.method === 'bedrock' || st.method === 'vertex');
+  // Cloud backends authenticate via the provider, not the in-app sign-in.
+  clShow('cl-connect', !cloud);
   const managed = st && (st.method === 'oauth_token' || st.method === 'api_key');
-  clShow('cl-disconnect', !!managed);
+  clShow('cl-disconnect', !!managed && !cloud);
 }
 
 function selectClChoice(mode) {
@@ -1135,7 +1148,8 @@ function selectClChoice(mode) {
 async function openClaudeDialog() {
   const st = await refreshClaude();
   clRenderState(st);
-  selectClChoice('oauth');
+  if (cloudBackend) clShow('cl-submit', false);
+  else selectClChoice('oauth');
   $('claude-dlg').showModal();
 }
 

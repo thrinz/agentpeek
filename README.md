@@ -129,6 +129,52 @@ If the host is already logged into Claude Code (`~/.claude/.credentials.json`
 exists), the chip shows **connected** and nothing else is needed. Disconnecting
 clears only agentpeek's saved token/key — it never touches the host's own login.
 
+### Cloud backends — AWS Bedrock & Google Vertex AI
+
+UI mode runs Claude Code, which can route to **Amazon Bedrock** or **Google
+Vertex AI** instead of the first-party Anthropic API. agentpeek detects this and
+adapts: the chip shows *"Using AWS Bedrock / Google Vertex"*, the in-app sign-in
+panel is hidden (the cloud provider authenticates you), the per-turn cost is
+hidden (billing goes through the cloud account), and the **model picker is
+hidden** — on these backends the `opus`/`sonnet`/`haiku` aliases don't resolve,
+so agentpeek lets Claude Code use the model you set in the environment.
+
+There's no UI for this yet — configure it by hand in
+`~/.config/agentpeek/agentpeek.env` (loaded by the systemd unit; for the manual
+`uvicorn` run, the vars must be in the process environment). Set the backend
+flag, the model IDs, and the provider credentials, then restart agentpeek.
+
+**Amazon Bedrock:**
+
+```bash
+CLAUDE_CODE_USE_BEDROCK=1
+AWS_REGION=us-east-1
+# AWS auth: a profile, static keys, or an attached IAM role
+AWS_PROFILE=default
+# Model IDs are Bedrock inference-profile / model IDs, not the short aliases:
+ANTHROPIC_MODEL=us.anthropic.claude-opus-4-...-v1:0
+ANTHROPIC_SMALL_FAST_MODEL=us.anthropic.claude-haiku-4-...-v1:0
+```
+
+**Google Vertex AI:**
+
+```bash
+CLAUDE_CODE_USE_VERTEX=1
+CLOUD_ML_REGION=us-east5
+ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project
+# GCP auth: application-default credentials (gcloud auth application-default login),
+# or a service-account key via GOOGLE_APPLICATION_CREDENTIALS=/path/key.json
+ANTHROPIC_MODEL=claude-opus-4-...
+ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-4-...
+```
+
+Look up the exact model IDs available in your account/region from the provider
+console (they change over time). The agent's tools (bash, file edits, etc.) run
+locally on your box regardless of which backend serves the model. Note that
+Anthropic's server-hosted features (Managed Agents, server-side tools) aren't
+available on Bedrock/Vertex — but agentpeek uses the local Claude Code agent, so
+that doesn't affect it.
+
 ## Security model
 
 agentpeek binds to `127.0.0.1` only and is reachable remotely solely through
