@@ -107,7 +107,30 @@ for unit in agentpeek-tmux agentpeek-ttyd agentpeek; do
     "$REPO/systemd/$unit.service" > "$HOME/.config/systemd/user/$unit.service"
 done
 systemctl --user daemon-reload
-systemctl --user enable --now agentpeek-tmux agentpeek-ttyd agentpeek
+systemctl --user enable agentpeek-tmux agentpeek-ttyd agentpeek
+# tmux is a oneshot that holds the session server — start it if down, but never
+# restart it (that kills the tmux server and every session in it).
+systemctl --user start agentpeek-tmux
+# Restart the web app + terminal bridge so a re-run frees ports 8090/7681, picks
+# up unit/code changes, and replaces any old instance still holding the port.
+systemctl --user restart agentpeek-ttyd agentpeek
+# Surface a real startup failure instead of silently continuing. Type=simple
+# reports "active" the moment uvicorn forks, so wait a beat: a bind failure trips
+# Restart=on-failure (RestartSec=2) and the unit drops out of "active".
+sleep 3
+if ! systemctl --user is-active --quiet agentpeek; then
+  echo "    !! agentpeek failed to start. Recent logs:" >&2
+  journalctl --user -u agentpeek --no-pager -n 15 >&2 || true
+  # Most failures here are 'address already in use' — show what holds the ports
+  # (e.g. a predecessor like webterm, or another user's instance).
+  holder="$(ss -ltnp 2>/dev/null | grep -E ':8090|:7681' || true)"
+  if [[ -n "$holder" ]]; then
+    echo "    Ports 8090/7681 are already in use by:" >&2
+    echo "$holder" >&2
+    echo "    Stop the other listener (e.g. 'systemctl --user disable --now <unit>'), then re-run." >&2
+  fi
+  exit 1
+fi
 
 echo "==> 6/6 linger (start services at WSL2 boot, without a login)"
 if ! loginctl enable-linger "$USER" 2>/dev/null; then
