@@ -91,8 +91,10 @@ missing, installs Claude Code, creates `.venv` and installs the Python deps
 (including `claude-agent-sdk`), sources `conf/agentpeek.tmux.conf` from
 `~/.tmux.conf`, installs and enables three systemd **user** services (`agentpeek-tmux`,
 `agentpeek-ttyd`, `agentpeek`), and enables linger so everything starts at WSL2
-boot. It's idempotent — safe to re-run — and offers to install Tailscale if it
-isn't already present.
+boot. At the end it **prompts you to set a browser login password** (hashed into
+`~/.config/agentpeek/agentpeek.env`) and prints the URL — `http://localhost:8090`.
+It's idempotent — safe to re-run — and offers to install Tailscale if it isn't
+already present.
 
 Expose on the tailnet (HTTPS, tailnet-only — never the public internet):
 
@@ -218,7 +220,12 @@ Tailscale (`tailscale serve`), so the baseline access control is tailnet
 membership/ACLs. Do not port-forward 8090/7681 to any public interface.
 
 **Optional key-based login** (same scheme as filepeek) adds a second factor on
-top of the tailnet. It turns on automatically once you set either env var in
+top of the tailnet. The easiest way to enable it is to **run `./setup.sh`** — it
+prompts for a password, hashes it, writes `~/.config/agentpeek/agentpeek.env`,
+and restarts the service. (Re-run it any time to change the password, or set
+`AGENTPEEK_PASSWORD=… ./setup.sh` to do it non-interactively.)
+
+To wire it up by hand instead, set either env var in
 `~/.config/agentpeek/agentpeek.env` (read by the systemd unit):
 
 ```bash

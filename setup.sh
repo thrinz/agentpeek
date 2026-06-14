@@ -116,27 +116,77 @@ fi
 
 ENV_FILE="$HOME/.config/agentpeek/agentpeek.env"
 
+# Upsert KEY=VALUE in the env file without a shell parsing the value (the hash
+# contains '$'). Replaces an existing KEY= line, else appends.
+set_env_kv() {
+  local key="$1" val="$2"
+  mkdir -p "$(dirname "$ENV_FILE")"; chmod 700 "$(dirname "$ENV_FILE")"
+  touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
+  local tmp; tmp="$(mktemp)"
+  grep -v "^${key}=" "$ENV_FILE" > "$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "$key" "$val" >> "$tmp"
+  mv "$tmp" "$ENV_FILE"; chmod 600 "$ENV_FILE"
+}
+
+# === login password ========================================================
+# agentpeek is open by default on localhost/tailnet. Offer to set a login now.
+# AGENTPEEK_PASSWORD=... sets it non-interactively (handy for automated retests).
+AUTH_ON=0
+if grep -q '^AGENTPEEK_PASSWORD_HASH=' "$ENV_FILE" 2>/dev/null; then AUTH_ON=1; fi
+
+password="${AGENTPEEK_PASSWORD:-}"
+if [[ -z "$password" && -t 0 ]]; then
+  echo
+  if [[ "$AUTH_ON" == "1" ]]; then
+    read -rp "A login password is already set. Replace it? [y/N] " ans
+    [[ "$ans" =~ ^[Yy] ]] || ans="skip"
+  else
+    read -rp "Set a browser login password now? (recommended) [Y/n] " ans
+    if [[ "$ans" =~ ^[Nn] ]]; then ans="skip"; fi
+  fi
+  if [[ "$ans" != "skip" ]]; then
+    while true; do
+      read -rsp "  Password: " p1; echo
+      read -rsp "  Confirm:  " p2; echo
+      if [[ -z "$p1" ]]; then echo "  (empty — skipping)"; break; fi
+      if [[ "$p1" != "$p2" ]]; then echo "  passwords didn't match — try again"; continue; fi
+      password="$p1"; break
+    done
+  fi
+fi
+
+if [[ -n "$password" ]]; then
+  hash="$(AGENTPEEK_PW="$password" PYTHONPATH="$REPO" "$REPO/.venv/bin/python" \
+    -c 'import os; from app import auth; print(auth.hash_password(os.environ["AGENTPEEK_PW"]))')"
+  set_env_kv AGENTPEEK_PASSWORD_HASH "$hash"
+  # SECRET keeps logins valid across restarts; only generate once.
+  if ! grep -q '^AGENTPEEK_SECRET=' "$ENV_FILE" 2>/dev/null; then
+    set_env_kv AGENTPEEK_SECRET \
+      "$(openssl rand -hex 32 2>/dev/null || "$REPO/.venv/bin/python" -c 'import secrets;print(secrets.token_hex(32))')"
+  fi
+  systemctl --user restart agentpeek
+  AUTH_ON=1
+  echo "    login enabled — your password is stored (hashed) in $ENV_FILE"
+fi
+
 echo
 echo "============================================================"
 echo " agentpeek is running — open it at:"
 echo
 echo "     http://localhost:8090     (http://127.0.0.1:8090)"
+if [[ "$AUTH_ON" == "1" ]]; then
+  echo "     (log in with the password you set)"
+else
+  echo "     (no login set — open on localhost/tailnet; re-run setup.sh to add one)"
+fi
 echo
-echo " It's a systemd user service, so it auto-starts on boot. Manage it with:"
+echo " It auto-starts on boot (systemd user service). Manage it with:"
 echo "     systemctl --user status  agentpeek"
 echo "     systemctl --user restart agentpeek"
 echo "     journalctl --user -u agentpeek -f      # live logs"
 echo "============================================================"
-
-echo
-echo "Set a password (recommended before exposing it anywhere)."
-echo "agentpeek is open by default on localhost/tailnet; add a login like this:"
-echo "    \"$REPO/.venv/bin/python\" -m app hash-password   # prints a hash"
-echo "    mkdir -p \"$(dirname "$ENV_FILE")\""
-echo "    echo 'AGENTPEEK_PASSWORD_HASH=<paste-the-hash>' >> \"$ENV_FILE\""
-echo "    echo \"AGENTPEEK_SECRET=\$(openssl rand -hex 32)\" >> \"$ENV_FILE\"   # keeps logins across restarts"
-echo "    systemctl --user restart agentpeek"
-echo "(For scripts/automation you can add AGENTPEEK_TOKEN=<token> and send it as 'Authorization: Bearer'.)"
+echo "(For scripts/automation, add AGENTPEEK_TOKEN=<token> to $ENV_FILE and send"
+echo " it as 'Authorization: Bearer <token>'.)"
 
 echo
 echo "Expose on the tailnet (HTTPS, tailnet-only — never the public internet):"
