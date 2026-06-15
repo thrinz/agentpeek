@@ -170,6 +170,7 @@ function renderFolderPicker() {
       cstate.group = path;
       clearFieldError(box);
     });
+    if (path === cstate.group) row.classList.add('selected');
     box.appendChild(row);
     for (const child of children.get(path) || []) addRow(child, depth + 1);
   };
@@ -315,13 +316,13 @@ async function newDir() {
   await buildDirTree(rel);
 }
 
-function openCreateDialog() {
+function openCreateDialog(preselectGroup = null) {
   $('c-name').value = '';
   $('c-error').textContent = '';
   for (const id of ['c-name', 'c-folders', 'c-dirtree']) {
     $(id).classList.remove('invalid');
   }
-  cstate.group = null; // mandatory — the user must pick a folder every time
+  cstate.group = preselectGroup; // mandatory — the user must pick a folder every time
   cstate.mode = 'ai';
   cstate.type = 'shell';
   cstate.cwd = null;   // mandatory — a real directory, not the projects root
@@ -636,6 +637,7 @@ async function doMove(s, group) {
 
 function openFolderMenu(path, anchor) {
   const items = [];
+  items.push(['Create session…', () => openCreateDialog(path), '']);
   if (path.split('/').length < MAX_FOLDER_DEPTH) {
     items.push(['New subfolder…', () => addFolder(path), '']);
   }
