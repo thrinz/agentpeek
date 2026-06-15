@@ -107,6 +107,23 @@ AGENTPEEK_PORT=9090 AGENTPEEK_TTYD_PORT=9091 ./setup.sh
 setup bakes them into the systemd units (the app's reverse proxy follows the ttyd
 port automatically), so re-running with the same values is all it takes.
 
+**Headless / cloud (Linode, DigitalOcean, …).** `setup.sh` runs non-interactively
+when there's no TTY — every prompt has an env override, so nothing blocks:
+
+```bash
+AGENTPEEK_INSTALL_TAILSCALE=1 ./setup.sh
+```
+
+- **Password** — with no TTY and none set, setup **generates a strong one**, prints
+  it, and saves it to `~/.config/agentpeek/initial-password.txt` (0600). Override
+  with `AGENTPEEK_PASSWORD=…`, or `AGENTPEEK_NO_PASSWORD=1` to rely on tailnet ACLs.
+- **Claude sign-in** — not done at setup (no host browser). After install, sign in
+  from the **Claude chip** in the web UI, or `claude auth login` over SSH.
+- **Reach it over Tailscale only** — agentpeek binds `127.0.0.1`; never expose
+  `8090`/`7681` on the public interface. `tailscale serve` is the intended door.
+- Cloud VMs are often **root** — setup sets `IS_SANDBOX=1` so UI mode and `cds`
+  work (the agent then acts as root without per-tool prompts).
+
 Expose on the tailnet (HTTPS, tailnet-only — never the public internet):
 
 ```bash

@@ -132,21 +132,15 @@ if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
   fi
   echo "    running as root: set IS_SANDBOX=1 so Claude allows skip-permissions (UI mode + cds)."
 fi
-# One-time Claude sign-in so UI/chat mode and cds work without a separate login.
-# `claude auth status` is JSON (loggedIn:true/false); `claude auth login` is the
-# interactive OAuth — it prints a URL, you approve in the browser and paste the
-# code back here (paste works in this terminal, unlike the in-browser one). It
-# persists credentials to ~/.claude, which both the SDK and cds read.
+# Report Claude sign-in state, but don't block setup on it — that keeps setup.sh
+# non-interactive (cloud/headless friendly). Sign in afterward from agentpeek's
+# Claude chip (in-browser, paste-friendly) or with `claude auth login`.
 if command -v claude >/dev/null 2>&1; then
   if claude auth status 2>/dev/null | grep -q '"loggedIn": *true'; then
-    echo "    Claude: already signed in."
-  elif [[ -t 0 ]]; then
-    read -rp "Sign in to Claude now? (needed for UI/chat mode) [Y/n] " ans
-    if [[ ! "$ans" =~ ^[Nn] ]]; then
-      claude auth login || echo "    sign-in didn't finish — run 'claude auth login' later."
-    fi
+    echo "    Claude: signed in."
   else
-    echo "    Claude: not signed in — run 'claude auth login' once (UI/chat mode needs it)."
+    echo "    Claude: not signed in yet — UI (chat) mode needs it. Sign in from"
+    echo "      agentpeek's Claude chip (bottom of the sidebar), or 'claude auth login'."
   fi
 fi
 
@@ -204,12 +198,16 @@ if ! loginctl enable-linger "$USER" 2>/dev/null; then
 fi
 
 # === login password ========================================================
-# agentpeek is open by default on localhost/tailnet. Offer to set a login now.
-# AGENTPEEK_PASSWORD=... sets it non-interactively (handy for automated retests).
+# agentpeek is open by default on localhost/tailnet. Set a login now:
+#   - AGENTPEEK_PASSWORD=...  sets it explicitly (any environment)
+#   - interactive TTY         prompts for one
+#   - headless/cloud, none set -> a strong one is generated and printed
+#   - AGENTPEEK_NO_PASSWORD=1  opts out (rely on tailnet ACLs only)
 AUTH_ON=0
 if grep -q '^AGENTPEEK_PASSWORD_HASH=' "$ENV_FILE" 2>/dev/null; then AUTH_ON=1; fi
 
 password="${AGENTPEEK_PASSWORD:-}"
+generated=""
 if [[ -z "$password" && -t 0 ]]; then
   echo
   if [[ "$AUTH_ON" == "1" ]]; then
@@ -228,6 +226,12 @@ if [[ -z "$password" && -t 0 ]]; then
       password="$p1"; break
     done
   fi
+elif [[ -z "$password" && "$AUTH_ON" == "0" && "${AGENTPEEK_NO_PASSWORD:-}" != "1" ]]; then
+  # No TTY to prompt and no password yet (cloud/headless): generate a strong one
+  # so the server isn't left open. Shown below and saved to a 0600 file.
+  password="$(openssl rand -hex 12 2>/dev/null \
+    || "$REPO/.venv/bin/python" -c 'import secrets;print(secrets.token_hex(12))')"
+  generated="$password"
 fi
 
 if [[ -n "$password" ]]; then
@@ -241,7 +245,15 @@ if [[ -n "$password" ]]; then
   fi
   systemctl --user restart agentpeek
   AUTH_ON=1
-  echo "    login enabled — your password is stored (hashed) in $ENV_FILE"
+  if [[ -n "$generated" ]]; then
+    pwfile="$HOME/.config/agentpeek/initial-password.txt"
+    printf '%s\n' "$generated" > "$pwfile"; chmod 600 "$pwfile"
+    echo "    no TTY to prompt — generated a login password:"
+    echo "        $generated"
+    echo "    (also saved to $pwfile — change it by re-running with AGENTPEEK_PASSWORD=...)"
+  else
+    echo "    login enabled — your password is stored (hashed) in $ENV_FILE"
+  fi
 fi
 
 echo
