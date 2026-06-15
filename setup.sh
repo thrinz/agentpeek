@@ -243,14 +243,22 @@ if [[ -n "$password" ]]; then
     set_env_kv AGENTPEEK_SECRET \
       "$(openssl rand -hex 32 2>/dev/null || "$REPO/.venv/bin/python" -c 'import secrets;print(secrets.token_hex(32))')"
   fi
+  # A generated password is temporary -> force a change on first login. An
+  # explicitly chosen one is final -> clear any stale flag. Write the flag BEFORE
+  # restarting so the service starts with it.
+  if [[ -n "$generated" ]]; then
+    set_env_kv AGENTPEEK_PASSWORD_MUST_CHANGE 1
+  elif grep -q '^AGENTPEEK_PASSWORD_MUST_CHANGE=1' "$ENV_FILE" 2>/dev/null; then
+    set_env_kv AGENTPEEK_PASSWORD_MUST_CHANGE ""
+  fi
   systemctl --user restart agentpeek
   AUTH_ON=1
   if [[ -n "$generated" ]]; then
     pwfile="$HOME/.config/agentpeek/initial-password.txt"
     printf '%s\n' "$generated" > "$pwfile"; chmod 600 "$pwfile"
-    echo "    no TTY to prompt — generated a login password:"
+    echo "    no TTY to prompt — generated a temporary login password:"
     echo "        $generated"
-    echo "    (also saved to $pwfile — change it by re-running with AGENTPEEK_PASSWORD=...)"
+    echo "    You'll be asked to set your own on first login. (Also saved to $pwfile.)"
   else
     echo "    login enabled — your password is stored (hashed) in $ENV_FILE"
   fi

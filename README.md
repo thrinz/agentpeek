@@ -114,9 +114,12 @@ when there's no TTY — every prompt has an env override, so nothing blocks:
 AGENTPEEK_INSTALL_TAILSCALE=1 ./setup.sh
 ```
 
-- **Password** — with no TTY and none set, setup **generates a strong one**, prints
-  it, and saves it to `~/.config/agentpeek/initial-password.txt` (0600). Override
-  with `AGENTPEEK_PASSWORD=…`, or `AGENTPEEK_NO_PASSWORD=1` to rely on tailnet ACLs.
+- **Password** — with no TTY and none set, setup **generates a strong temporary
+  one**, prints it, and saves it to `~/.config/agentpeek/initial-password.txt`
+  (0600). It's **one-time**: your first login is forced through a *change password*
+  screen, after which the temp password and that file are discarded. Override with
+  `AGENTPEEK_PASSWORD=…` (final, no forced change), or `AGENTPEEK_NO_PASSWORD=1` to
+  rely on tailnet ACLs only.
 - **Claude sign-in** — not done at setup (no host browser). After install, sign in
   from the **Claude chip** in the web UI, or `claude auth login` over SSH.
 - **Reach it over Tailscale only** — agentpeek binds `127.0.0.1`; never expose
