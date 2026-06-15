@@ -259,7 +259,9 @@ tailscale serve --bg --https=9443 http://127.0.0.1:8090</code></pre>
      Code</strong>, a Python venv and the systemd services — and offers to install Tailscale. You'll
      need <strong>systemd enabled</strong> on WSL2, and the repo on the Linux filesystem (not a
      <code>/mnt/c</code> Windows drive) — see the
-     <a href="https://github.com/thrinz/agentpeek#prerequisites">full prerequisites</a>.</p>
+     <a href="https://github.com/thrinz/agentpeek#prerequisites">full prerequisites</a>.
+     Ports clashing (another service or WSL distro)? Run with
+     <code>AGENTPEEK_PORT=9090 AGENTPEEK_TTYD_PORT=9091 ./setup.sh</code>.</p>
 
   <h2>Frequently asked questions</h2>
   <details><summary>Which AI agents does it run?</summary>
