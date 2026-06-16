@@ -299,6 +299,55 @@ body.collapsed #expand-btn { display: block; }
 #main.attached #term { display: block; }
 #main.attached #empty { display: none; }
 
+/* ---------- mobile key bar ---------- */
+/* Hidden on desktop; shown on touch devices when a shell session is attached. */
+#keybar { display: none; }
+
+#keybar button {
+  flex: 0 0 auto;
+  min-width: 44px;
+  height: 38px;
+  padding: 0 12px;
+  background: var(--bg-hover);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 15px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+#keybar button:active { background: var(--bg-active); }
+#keybar button.armed {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+#kb-capture {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  border: 0; padding: 0;
+  pointer-events: none;
+}
+
+@media (pointer: coarse) {
+  #main.attached { display: flex; flex-direction: column; }
+  #main.attached #term { flex: 1 1 auto; height: auto; }
+  #main.attached #keybar {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 6px 8px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    background: var(--bg-side);
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 /* ---------- dialog ---------- */
 
 dialog {
@@ -312,6 +361,7 @@ dialog {
 dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
 dialog h3 { margin: 0 0 8px; font-size: 16px; }
 dialog p { margin: 0 0 10px; font-size: 13px; color: var(--fg-dim); }
+#dlg-msg { white-space: pre-line; word-break: break-word; }
 #dlg-error { color: var(--danger); min-height: 1em; }
 #dlg-input {
   width: 100%;
@@ -362,6 +412,29 @@ dialog menu button {
   font-size: 14px;
 }
 #c-name:focus { outline: 1px solid var(--accent); }
+
+/* notify-on-finish controls */
+#c-notify-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+#c-notify-toggle input { accent-color: var(--accent); }
+#c-notify-row { display: flex; gap: 6px; flex-wrap: wrap; }
+#c-notify-topic, #c-notify-new {
+  flex: 1 1 auto;
+  min-width: 140px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  padding: 7px 8px;
+  font-size: 14px;
+}
+#c-notify-topic:focus, #c-notify-new:focus { outline: 1px solid var(--accent); }
+#c-notify-new.invalid { border-color: var(--danger); }
 
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip {

@@ -18,6 +18,19 @@ function sshAttachCommand(name) {
 // remembered UI state (folder open/closed and sidebar collapse only)
 const groupState = JSON.parse(localStorage.getItem('agentpeek-groups') || '{}');
 
+// ntfy topics the user has used before, for the create-dialog dropdown.
+const NOTIFY_KEY = 'agentpeek-notify-topics';
+const ADD_NEW = '__add_new__';
+function loadTopics() {
+  try { return JSON.parse(localStorage.getItem(NOTIFY_KEY)) || []; }
+  catch { return []; }
+}
+function rememberTopic(topic) {
+  const list = loadTopics().filter((t) => t !== topic);
+  list.unshift(topic); // most-recently-used first
+  localStorage.setItem(NOTIFY_KEY, JSON.stringify(list.slice(0, 20)));
+}
+
 /* ---------- API ---------- */
 
 async function req(method, url, body) {
@@ -45,6 +58,12 @@ const api = {
   move: (name, group) =>
     req('PATCH', `/api/sessions/${encodeURIComponent(name)}`, { group }),
   kill: (name) => req('DELETE', `/api/sessions/${encodeURIComponent(name)}`),
+  keys: (name, keys) =>
+    req('POST', `/api/sessions/${encodeURIComponent(name)}/keys`, { keys }),
+  scroll: (name, dir) =>
+    req('POST', `/api/sessions/${encodeURIComponent(name)}/keys`, { scroll: dir }),
+  paste: (name, text) =>
+    req('POST', `/api/sessions/${encodeURIComponent(name)}/keys`, { text }),
   host: () => req('GET', '/api/host'),
   config: () => req('GET', '/api/config'),
   dirs: (path) => req('GET', `/api/dirs?path=${encodeURIComponent(path)}`),
@@ -336,11 +355,44 @@ function openCreateDialog(preselectGroup = null) {
   });
   $('c-start-field').hidden = cstate.type === 'ui';
 
+  // notifications: off by default, dropdown of remembered topics + "add new"
+  $('c-notify').checked = false;
+  $('c-notify-new').value = '';
+  renderTopicOptions();
+  updateNotifyVisibility();
+
   // fresh tree rooted at projects/, expanded one level, nothing preselected
   buildDirTree();
 
   $('cdlg').showModal();
   $('c-name').focus();
+}
+
+// Fill the topic dropdown with remembered topics plus an "add new" entry.
+function renderTopicOptions(selected) {
+  const sel = $('c-notify-topic');
+  const topics = loadTopics();
+  sel.textContent = '';
+  for (const t of topics) {
+    const o = document.createElement('option');
+    o.value = t; o.textContent = t;
+    sel.appendChild(o);
+  }
+  const addOpt = document.createElement('option');
+  addOpt.value = ADD_NEW;
+  addOpt.textContent = topics.length ? '➕ Add new topic…' : '➕ Add a topic…';
+  sel.appendChild(addOpt);
+  sel.value = selected || (topics.length ? topics[0] : ADD_NEW);
+}
+
+// Show notify only for shell+AI sessions (UI chat and plain shells don't run
+// the cds hook). The topic row shows when checked; the text box for "add new".
+function updateNotifyVisibility() {
+  const eligible = cstate.type === 'shell' && cstate.mode === 'ai';
+  $('c-notify-field').hidden = !eligible;
+  const on = eligible && $('c-notify').checked;
+  $('c-notify-row').hidden = !on;
+  $('c-notify-new').hidden = !on || $('c-notify-topic').value !== ADD_NEW;
 }
 
 async function submitCreate() {
@@ -360,13 +412,25 @@ async function submitCreate() {
     $('c-dirtree').classList.add('invalid');
     return;
   }
+  // Resolve the notification topic (shell + AI mode only).
+  let notify_topic = null;
+  if (cstate.type === 'shell' && cstate.mode === 'ai' && $('c-notify').checked) {
+    const sel = $('c-notify-topic').value;
+    notify_topic = (sel === ADD_NEW ? $('c-notify-new').value : sel).trim();
+    if (!NAME_RE.test(notify_topic)) {
+      $('c-error').textContent = `Topic name: ${NAME_HINT}`;
+      $('c-notify-new').classList.add('invalid');
+      return;
+    }
+  }
   try {
     const mode = cstate.type === 'ui' ? 'ui' : cstate.mode;
-    await api.create({ name, group: cstate.group, cwd: cstate.cwd, mode });
+    await api.create({ name, group: cstate.group, cwd: cstate.cwd, mode, notify_topic });
   } catch (e) {
     $('c-error').textContent = e.message;
     return;
   }
+  if (notify_topic) rememberTopic(notify_topic);
   $('cdlg').close();
   await refresh();
   if (cstate.type === 'ui') openChat(name); else attach(name);
@@ -606,7 +670,10 @@ function showMenu(items, anchor) {
 }
 
 function openSessionMenu(s, anchor) {
-  const items = [['Rename…', () => renameSession(s), '']];
+  const items = [
+    ['Info…', () => sessionInfo(s), ''],
+    ['Rename…', () => renameSession(s), ''],
+  ];
   if (config.folders.length > 1) {
     items.push(['Move to folder…', () => moveSession(s, anchor), '']);
   }
@@ -616,6 +683,17 @@ function openSessionMenu(s, anchor) {
   }
   items.push(['Terminate…', () => killSession(s), 'danger']);
   showMenu(items, anchor);
+}
+
+// Show where the session lives: its sidebar folder and the directory it
+// was created in.
+function sessionInfo(s) {
+  const location = s.cwd || 'unknown (created from the CLI)';
+  ask({
+    title: `"${s.name}"`,
+    msg: `Folder: ${s.group}\nLocation: ${location}`,
+    okLabel: 'OK',
+  });
 }
 
 // Second-level menu: pick a destination folder for the session.
@@ -1356,6 +1434,7 @@ $('c-mode').querySelectorAll('.chip').forEach((b) => {
     $('c-mode').querySelectorAll('.chip').forEach((c) => c.classList.remove('selected'));
     b.classList.add('selected');
     cstate.mode = b.dataset.mode;
+    updateNotifyVisibility();
   });
 });
 $('c-type').querySelectorAll('.chip').forEach((b) => {
@@ -1364,9 +1443,88 @@ $('c-type').querySelectorAll('.chip').forEach((b) => {
     b.classList.add('selected');
     cstate.type = b.dataset.type;
     $('c-start-field').hidden = cstate.type === 'ui';
+    updateNotifyVisibility();
   });
 });
+$('c-notify').addEventListener('change', () => {
+  updateNotifyVisibility();
+  if ($('c-notify').checked && $('c-notify-topic').value === ADD_NEW) {
+    $('c-notify-new').focus();
+  }
+});
+$('c-notify-topic').addEventListener('change', () => {
+  updateNotifyVisibility();
+  if ($('c-notify-topic').value === ADD_NEW) $('c-notify-new').focus();
+});
+$('c-notify-new').addEventListener('input', () => clearFieldError($('c-notify-new')));
 $('dlg-cancel').addEventListener('click', () => $('dlg').close('cancel'));
+
+/* ---------- mobile key bar ---------- */
+// Buttons send keys straight to tmux (api.keys/scroll/paste), which is reliable
+// on iOS Safari where the soft keyboard's modifier keys are not. Only active for
+// shell (terminal) sessions — UI chat sessions have their own input. The Ctrl
+// button is a sticky modifier: the next character typed into the hidden capture
+// input is sent as Ctrl+<char>, then it disarms.
+
+let ctrlArmed = false;
+
+function setCtrlArmed(on) {
+  ctrlArmed = on;
+  $('kb-ctrl').classList.toggle('armed', on);
+  if (on) { $('kb-capture').value = ''; $('kb-capture').focus(); }
+}
+
+function shellActive() { return active && activeKind === 'shell'; }
+
+async function sendKeys(keys) {
+  if (!shellActive()) return;
+  try { await api.keys(active, keys); } catch (e) { flash(e.message); }
+}
+
+// Paste the clipboard into the session. The Clipboard API needs a secure
+// context (https/localhost); when unavailable we fall back to a prompt the
+// user can long-press → Paste into.
+async function pasteIntoSession() {
+  if (!shellActive()) return;
+  let text = '';
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      text = await navigator.clipboard.readText();
+    }
+  } catch { /* blocked or denied — fall through to manual prompt */ }
+  if (!text) {
+    text = await ask({ title: 'Paste', msg: 'Paste your text here, then OK.',
+      input: '', okLabel: 'Paste' });
+    if (text === null) return; // cancelled
+  }
+  if (!text) return;
+  try { await api.paste(active, text); } catch (e) { flash(e.message); }
+}
+
+function setupKeybar() {
+  const bar = $('keybar');
+  bar.querySelectorAll('button[data-key]').forEach((b) => {
+    b.addEventListener('click', () => sendKeys([b.dataset.key]));
+  });
+  bar.querySelectorAll('button[data-scroll]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      if (!shellActive()) return;
+      try { await api.scroll(active, b.dataset.scroll); } catch (e) { flash(e.message); }
+    });
+  });
+  $('kb-ctrl').addEventListener('click', () => setCtrlArmed(!ctrlArmed));
+  $('kb-paste').addEventListener('click', pasteIntoSession);
+
+  const cap = $('kb-capture');
+  cap.addEventListener('input', () => {
+    const ch = cap.value.slice(-1).toLowerCase();
+    cap.value = '';
+    if (ch && /[a-z0-9]/.test(ch)) sendKeys([`C-${ch}`]);
+    setCtrlArmed(false);
+  });
+  cap.addEventListener('blur', () => setCtrlArmed(false));
+}
+setupKeybar();
 
 setInterval(refresh, 3000);
 window.addEventListener('focus', refresh);

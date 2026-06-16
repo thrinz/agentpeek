@@ -113,6 +113,7 @@ class CreateBody(BaseModel):
     cwd: str             # mandatory — a directory inside DIRS_ROOT, not the root itself
     mode: str = "ai"     # "ai" runs `cds` in a shell | "shell" | "ui" (Claude chat)
     model: str | None = None  # UI mode only: "opus" | "sonnet" | "haiku"
+    notify_topic: str | None = None  # ntfy topic for push on turn-complete (ai mode)
 
 
 class RenameBody(BaseModel):
@@ -172,7 +173,8 @@ def create_session(body: CreateBody):
         model = body.model if body.model in ui_agent.MODELS else ui_agent.DEFAULT_MODEL
         ui_agent.manager.create(name, group, cwd, model)
     else:
-        _call(mux.create, name, cwd, group, body.mode == "ai")
+        topic = (body.notify_topic or "").strip() or None
+        _call(mux.create, name, cwd, group, body.mode == "ai", topic)
     return {"name": name}
 
 
@@ -333,6 +335,25 @@ def update_session(name: str, body: RenameBody):
         return {"name": new}
     _call(mux.rename, name, new)
     return {"name": new}
+
+
+class KeysBody(BaseModel):
+    keys: list[str] = []        # tmux key names, e.g. ["C-c"], ["Escape"], ["Up"]
+    scroll: str | None = None   # "up" | "down" — scroll the view in copy-mode
+    text: str | None = None     # literal text to paste into the session
+
+
+@app.post("/api/sessions/{name}/keys", status_code=204)
+def session_keys(name: str, body: KeysBody):
+    # Touch-bar keys apply to tmux (shell/ai) sessions, not UI chat sessions.
+    if ui_agent.manager.exists(name):
+        raise HTTPException(422, "Key input is only available for shell sessions.")
+    if body.text is not None:
+        _call(mux.send_text, name, body.text)
+    elif body.scroll is not None:
+        _call(mux.scroll, name, body.scroll)
+    else:
+        _call(mux.send_keys, name, body.keys)
 
 
 @app.delete("/api/sessions/{name}", status_code=204)

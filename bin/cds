@@ -7,4 +7,21 @@
 # Claude refuses --dangerously-skip-permissions as root unless IS_SANDBOX is set,
 # so opt in when we're root (e.g. a root-only WSL distro). Harmless for non-root.
 [[ ${EUID:-$(id -u)} -eq 0 ]] && export IS_SANDBOX=1
+
+# Optional first argument turns on ntfy "turn complete" push notifications by
+# setting CLAUDE_NOTIFY_TOPIC, which the Stop hook in ~/.claude/settings.json
+# reads (see the "Phone notifications" section of the README):
+#   cds            -> notifications off (default)
+#   cds on         -> notify to $CDS_NOTIFY_TOPIC (set one in your shell rc)
+#   cds <topic>    -> notify to a custom ntfy topic
+#   cds off        -> off (explicit)
+# The create dialog's "Notify my phone" option types `cds <topic>` for you.
+topic=""
+case "$1" in
+  on|ON)   topic="$CDS_NOTIFY_TOPIC"; shift ;;
+  off|OFF) topic=""; shift ;;
+  -*|"")   topic="" ;;                 # a claude flag or nothing -> notify off
+  *)       topic="$1"; shift ;;        # explicit topic name
+esac
+export CLAUDE_NOTIFY_TOPIC="$topic"
 exec claude --dangerously-skip-permissions "$@"

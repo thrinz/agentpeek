@@ -42,6 +42,21 @@
       Paste: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>
       <button id="term-hint-x" title="Don't show again">×</button>
     </div>
+    <div id="keybar">
+      <button data-key="Escape">esc</button>
+      <button data-key="Tab">tab</button>
+      <button id="kb-ctrl" data-ctrl>ctrl</button>
+      <button data-key="Up">↑</button>
+      <button data-key="Down">↓</button>
+      <button data-key="Left">←</button>
+      <button data-key="Right">→</button>
+      <button data-scroll="up">⇞ scroll</button>
+      <button data-scroll="down">scroll ⇟</button>
+      <button id="kb-paste">paste</button>
+      <input id="kb-capture" inputmode="text" autocomplete="off"
+             autocapitalize="none" autocorrect="off" spellcheck="false"
+             aria-hidden="true" tabindex="-1">
+    </div>
     <div id="chat" hidden>
       <div id="chat-head">
         <span id="chat-title"></span>
@@ -93,6 +108,16 @@
         <div id="c-mode" class="chips">
           <button type="button" class="chip selected" data-mode="ai" title="Runs cds (claude --dangerously-skip-permissions)">AI (Claude)</button>
           <button type="button" class="chip" data-mode="shell">Shell</button>
+        </div>
+      </div>
+      <div class="field" id="c-notify-field">
+        <label class="field-label" id="c-notify-toggle">
+          <input type="checkbox" id="c-notify"> Notify my phone when Claude finishes
+        </label>
+        <div id="c-notify-row" hidden>
+          <select id="c-notify-topic"></select>
+          <input id="c-notify-new" autocomplete="off" spellcheck="false"
+                 placeholder="new topic (e.g. claude-mywork)" hidden>
         </div>
       </div>
       <div class="field">

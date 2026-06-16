@@ -160,6 +160,56 @@ your launcher command into the new shell, or plain *Shell*).
 > the env file (and `cds` sets it too) to allow it — this lets the agent act as
 > root without per-tool prompts, so prefer running agentpeek as a normal user.
 
+For an *AI* (Shell + AI) session the create dialog also offers **“Notify my phone
+when Claude finishes”** with a dropdown of remembered [ntfy](#phone-notifications-ntfy)
+topics — see below.
+
+## Phone notifications (ntfy)
+
+Get a push on your phone every time Claude finishes a turn in a session, using
+the free [ntfy.sh](https://ntfy.sh) service. Three pieces cooperate:
+
+1. **A Claude Code Stop hook** (one-time, per machine). Add this to
+   `~/.claude/settings.json` — it pushes only when `CLAUDE_NOTIFY_TOPIC` is set,
+   so sessions without a topic stay silent:
+
+   ```json
+   {
+     "hooks": {
+       "Stop": [
+         { "hooks": [
+           { "type": "command",
+             "command": "[ -n \"$CLAUDE_NOTIFY_TOPIC\" ] && curl -s -H \"Title: Claude Code\" -d \"Claude finished a turn in $(basename \"${CLAUDE_PROJECT_DIR:-session}\")\" \"https://ntfy.sh/$CLAUDE_NOTIFY_TOPIC\" >/dev/null 2>&1 || true",
+             "async": true }
+         ] }
+       ]
+     }
+   }
+   ```
+
+2. **`cds`** sets `CLAUDE_NOTIFY_TOPIC` from its first argument — `cds` (off),
+   `cds on` (uses `$CDS_NOTIFY_TOPIC`, export your default in your shell rc), or
+   `cds <topic>` (a custom topic). The installed `bin/cds` already does this.
+
+3. **The create dialog** ties it together: tick *Notify my phone*, pick or add a
+   topic, and agentpeek types `cds <topic>` into the new session for you. Topics
+   you add are remembered in the browser for next time.
+
+On your phone, install the **ntfy** app (iOS/Android) and **subscribe to the same
+topic name**. Topics are public unguessable strings — anyone who knows the name
+can read its messages, so use something random like `claude-$(openssl rand -hex 4)`
+and don't share it.
+
+## Mobile (touch) use
+
+On phones/tablets a **touch key bar** appears under the terminal when a Shell
+session is attached, with the keys a soft keyboard can't reliably send to a
+terminal: **esc, tab, ctrl** (sticky — tap it then a letter for Ctrl-combos),
+**arrow keys**, **scroll** up/down, and **paste**. Every button routes through
+`tmux send-keys` on the server (`POST /api/sessions/<name>/keys`), so it works
+even where iOS Safari's keyboard events don't reach xterm. Pair it with
+`tailscale serve --https` so the clipboard-based paste has a secure context.
+
 ## UI mode — Claude chat
 
 A **UI** session is a chat with the **Claude Agent SDK** running in the chosen
