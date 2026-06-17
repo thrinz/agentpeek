@@ -76,6 +76,12 @@ Also: you need `git` to clone the repo and Python **3.10+** (already on Ubuntu
 you need **Tailscale** — `setup.sh` offers to install it for you (or set
 `AGENTPEEK_INSTALL_TAILSCALE=1`/`0` to skip the prompt).
 
+- **[filepeek](https://github.com/thrinz/filepeek) (recommended companion)** —
+  the downstream viewer that renders the `.md`/`.html`/`.xlsx`/code files your
+  agents generate, so you can browse them in the browser. `setup.sh` offers to
+  clone and install it next to agentpeek (or set `AGENTPEEK_INSTALL_FILEPEEK=1`/`0`
+  to skip the prompt). See [Companion tool](#companion-tool).
+
 ### Install
 
 Clone into your Linux home, **not** a Windows drive — a repo under `/mnt/c/...`
@@ -382,6 +388,19 @@ together they cover the loop of working with AI agents on a remote/WSL2 box:
 
 Both are self-hosted, single-operator tools that bind to `127.0.0.1` and go
 over Tailscale, and they share a design language.
+
+**Install filepeek.** `setup.sh` offers to clone and install it next to agentpeek
+(answer the *Install filepeek now?* prompt, or set `AGENTPEEK_INSTALL_FILEPEEK=1`
+to do it non-interactively). To do it by hand instead:
+
+```bash
+cd ~ && git clone https://github.com/thrinz/filepeek && cd filepeek
+./install.sh
+# serve your projects tree (filepeek defaults to port 8765, bound to 127.0.0.1):
+FILEPEEK_ROOT=~/projects .venv/bin/python app.py
+# then expose it tailnet-only, like agentpeek (pick any free https port):
+tailscale serve --bg --https=9444 http://127.0.0.1:8765
+```
 
 ## License
 

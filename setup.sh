@@ -311,3 +311,31 @@ if ! command -v tailscale >/dev/null 2>&1; then
     echo "      curl -fsSL https://tailscale.com/install.sh | sh"
   fi
 fi
+
+# filepeek is agentpeek's companion viewer — it renders the .md/.html/.xlsx/code
+# files the agents produce so you can browse them in the browser. It's a separate
+# repo, so offer to clone+install it next to agentpeek. Set AGENTPEEK_INSTALL_FILEPEEK=1
+# (or 0) to answer without a prompt — e.g. for a non-interactive run.
+FILEPEEK_DIR="$(dirname "$REPO")/filepeek"
+if [[ ! -d "$FILEPEEK_DIR" ]]; then
+  install_fp="${AGENTPEEK_INSTALL_FILEPEEK:-}"
+  if [[ -z "$install_fp" && -t 0 ]]; then
+    read -rp $'\nInstall filepeek now (companion viewer for generated files)? [y/N] ' reply
+    [[ "$reply" =~ ^[Yy] ]] && install_fp=1 || install_fp=0
+  fi
+  if [[ "$install_fp" == "1" ]]; then
+    echo "    cloning filepeek into $FILEPEEK_DIR…"
+    if git clone https://github.com/thrinz/filepeek "$FILEPEEK_DIR"; then
+      ( cd "$FILEPEEK_DIR" && ./install.sh )
+      echo "    installed. Start it (serving ~/projects):"
+      echo "      cd $FILEPEEK_DIR && FILEPEEK_ROOT=~/projects .venv/bin/python app.py"
+      echo "    then expose on the tailnet:  tailscale serve --bg --https=9444 http://127.0.0.1:8765"
+    else
+      echo "    !! filepeek clone failed — install it by hand later (see README)."
+    fi
+  else
+    echo
+    echo "Note: install the companion viewer filepeek to browse generated files:"
+    echo "      git clone https://github.com/thrinz/filepeek && cd filepeek && ./install.sh"
+  fi
+fi
