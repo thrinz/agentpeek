@@ -120,6 +120,12 @@ when there's no TTY — every prompt has an env override, so nothing blocks:
 AGENTPEEK_INSTALL_TAILSCALE=1 ./setup.sh
 ```
 
+For a one-shot deploy, paste [`deploy/cloud-init.sh`](deploy/cloud-init.sh) into a
+Linode/DO droplet's **User Data** field — it clones, installs, joins your tailnet
+(with a Tailscale auth key), and serves agentpeek over HTTPS. See
+[`deploy/MARKETPLACE.md`](deploy/MARKETPLACE.md) for the StackScript and the Linode
+/ DigitalOcean Marketplace submission steps.
+
 - **Password** — with no TTY and none set, setup **generates a strong temporary
   one**, prints it, and saves it to `~/.config/agentpeek/initial-password.txt`
   (0600). It's **one-time**: your first login is forced through a *change password*
