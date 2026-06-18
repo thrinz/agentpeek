@@ -29,6 +29,8 @@ from claude_agent_sdk import (
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
+    create_sdk_mcp_server,
+    tool,
 )
 
 from . import claude_auth
@@ -48,6 +50,65 @@ DEFAULT_MODEL = "opus"
 # Web UI has no interactive permission prompts, so the agent runs autonomously
 # in its working directory (same trust model as a terminal Claude Code session).
 PERMISSION_MODE = "bypassPermissions"
+
+# The built-in AskUserQuestion can't be answered in a headless SDK run (it
+# auto-resolves to a default), so we disable it and expose our own in-process
+# tool. Its handler blocks until the browser submits answers via the websocket,
+# then returns them as the tool result — the faithful terminal behaviour. The
+# system-prompt nudge points the agent at it instead of the built-in.
+ASK_TOOL = "ask_user"
+ASK_SERVER = "ask"
+ASK_QUALIFIED = f"mcp__{ASK_SERVER}__{ASK_TOOL}"
+ASK_PROMPT_APPEND = (
+    "When you need the user to make a choice, do NOT use AskUserQuestion (it is "
+    f"disabled here). Call the `{ASK_QUALIFIED}` tool instead — it renders an "
+    "interactive picker in the web UI and returns the user's selections."
+)
+ASK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "questions": {
+            "type": "array",
+            "description": "One or more questions to ask the user at once.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string",
+                                 "description": "The full question text."},
+                    "header": {"type": "string",
+                               "description": "Short tab label (max ~12 chars)."},
+                    "multiSelect": {"type": "boolean",
+                                    "description": "Allow multiple selections."},
+                    "options": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["label"],
+                        },
+                    },
+                },
+                "required": ["question", "header", "options"],
+            },
+        }
+    },
+    "required": ["questions"],
+}
+
+
+def _format_ask_result(questions: list, answers: list) -> str:
+    """Render the user's submitted answers as the tool result the agent reads."""
+    lines = ["The user answered:"]
+    for i, q in enumerate(questions):
+        header = q.get("header") or q.get("question") or f"Q{i + 1}"
+        picked = answers[i] if i < len(answers) else []
+        if isinstance(picked, str):
+            picked = [picked]
+        lines.append(f"- {header}: {', '.join(picked) if picked else '(no answer)'}")
+    return "\n".join(lines)
 
 # Suspend an idle agent (free its `claude` subprocess) after this long with no
 # connected browsers and nothing running; it resumes on the next message.
@@ -88,6 +149,13 @@ class AgentRunner:
         self.busy = False
         self.task = None
         self.last_active = time.time()
+        # In-flight ask_user calls: id -> (Future, questions). The future is
+        # resolved by the websocket when the browser submits answers.
+        self.pending_asks: dict = {}
+        self._ask_seq = 0
+        # tool_use ids for ask_user calls, so we can hide the raw tool_use /
+        # tool_result events (the ask / ask_answered cards stand in for them).
+        self._ask_tool_use_ids: set = set()
 
     # --- lifecycle -------------------------------------------------------
 
@@ -101,12 +169,18 @@ class AgentRunner:
         # On Bedrock/Vertex the opus/sonnet/haiku aliases don't resolve — let
         # Claude Code use the model configured in its env (ANTHROPIC_MODEL).
         model = None if claude_auth.backend() else resolve_model(self.model)
+        ask_server = create_sdk_mcp_server(
+            name=ASK_SERVER, tools=[self._build_ask_tool()])
         opts = ClaudeAgentOptions(
             cwd=self.cwd,
             permission_mode=PERMISSION_MODE,
             model=model,
             resume=self.session_id,
-            system_prompt={"type": "preset", "preset": "claude_code"},
+            system_prompt={"type": "preset", "preset": "claude_code",
+                           "append": ASK_PROMPT_APPEND},
+            mcp_servers={ASK_SERVER: ask_server},
+            allowed_tools=[ASK_QUALIFIED],
+            disallowed_tools=["AskUserQuestion"],
             include_partial_messages=True,  # token-level streaming
         )
         self.client = ClaudeSDKClient(options=opts)
@@ -174,10 +248,18 @@ class AgentRunner:
                     if text:
                         await self._emit({"role": "thinking", "text": text})
                 elif isinstance(b, ToolUseBlock):
+                    # Our ask_user tool is represented by the ask/ask_answered
+                    # cards, so don't also dump its raw tool_use JSON.
+                    if b.name == ASK_QUALIFIED:
+                        self._ask_tool_use_ids.add(b.id)
+                        continue
                     await self._emit({"role": "tool_use", "name": b.name, "input": b.input})
         elif isinstance(msg, UserMessage):
             for b in getattr(msg, "content", None) or []:
                 if isinstance(b, ToolResultBlock):
+                    if getattr(b, "tool_use_id", None) in self._ask_tool_use_ids:
+                        self._ask_tool_use_ids.discard(b.tool_use_id)
+                        continue
                     await self._emit({"role": "tool_result", "text": _tool_result_text(b)})
         elif isinstance(msg, ResultMessage):
             self._note_session(getattr(msg, "session_id", None))
@@ -193,6 +275,54 @@ class AgentRunner:
         if sid and sid != self.session_id:
             self.session_id = sid
             self.manager.note_session(self.name, sid)
+
+    # --- interactive ask_user -------------------------------------------
+
+    def _build_ask_tool(self):
+        @tool(ASK_TOOL,
+              "Ask the user one or more multiple-choice questions and wait for "
+              "their answer. Renders an interactive picker in the web UI.",
+              ASK_SCHEMA)
+        async def ask_user(args):
+            questions = args.get("questions") or []
+            if not questions:
+                return {"content": [{"type": "text",
+                                     "text": "No questions provided."}],
+                        "is_error": True}
+            self._ask_seq += 1
+            qid = f"{self.name}:{self._ask_seq}"
+            fut = asyncio.get_event_loop().create_future()
+            self.pending_asks[qid] = (fut, questions)
+            # Persist + broadcast so reconnecting browsers see the open card.
+            await self._emit({"role": "ask", "id": qid, "questions": questions})
+            try:
+                answers = await fut
+            except asyncio.CancelledError:
+                self.pending_asks.pop(qid, None)
+                raise
+            finally:
+                self.pending_asks.pop(qid, None)
+            await self._emit({"role": "ask_answered", "id": qid,
+                              "answers": answers})
+            return {"content": [{"type": "text",
+                                 "text": _format_ask_result(questions, answers)}]}
+        return ask_user
+
+    def resolve_ask(self, qid, answers):
+        """Called from the websocket when the browser submits answers."""
+        entry = self.pending_asks.get(qid)
+        if not entry:
+            return False
+        fut, _questions = entry
+        if not fut.done():
+            fut.set_result(answers)
+        return True
+
+    def _cancel_pending_asks(self):
+        for fut, _q in self.pending_asks.values():
+            if not fut.done():
+                fut.cancel()
+        self.pending_asks.clear()
 
     # --- io --------------------------------------------------------------
 
@@ -228,6 +358,7 @@ class AgentRunner:
         await self._status()
 
     async def interrupt(self):
+        self._cancel_pending_asks()
         if self.client and self.busy:
             try:
                 await self.client.interrupt()
@@ -262,6 +393,7 @@ class AgentRunner:
     async def suspend(self):
         """Free the agent subprocess while idle; transcript + session id are kept,
         and the next message reconnects with resume=session_id."""
+        self._cancel_pending_asks()
         if self.task:
             self.task.cancel()
             self.task = None
@@ -274,6 +406,7 @@ class AgentRunner:
         self.busy = False
 
     async def shutdown(self):
+        self._cancel_pending_asks()
         await self.queue.put(None)
         if self.client:
             try:

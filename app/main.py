@@ -80,12 +80,12 @@ def _validate_folder_path(path: str) -> str:
     segments = path.split("/")
     if not path or len(segments) > MAX_FOLDER_DEPTH:
         raise HTTPException(
-            422, f"Folders can nest at most {MAX_FOLDER_DEPTH - 1} levels "
-                 "below a top-level folder.")
+            422, f"Groups can nest at most {MAX_FOLDER_DEPTH - 1} levels "
+                 "below a top-level group.")
     for seg in segments:
         if not mux.NAME_RE.match(seg):
             raise HTTPException(
-                422, "Folder names may only contain letters, digits, '-' and '_'.")
+                422, "Group names may only contain letters, digits, '-' and '_'.")
     return path
 
 app = FastAPI(title="agentpeek")
@@ -157,7 +157,7 @@ def create_session(body: CreateBody):
     name = body.name.strip()
     group = body.group.strip().strip("/")
     if group not in _load_folders():
-        raise HTTPException(422, f"Unknown folder '{group}'.")
+        raise HTTPException(422, f"Unknown group '{group}'.")
     if body.mode not in ("shell", "ai", "ui"):
         raise HTTPException(422, "Start option must be 'shell', 'ai', or 'ui'.")
     cwd = _resolve_dir(body.cwd)
@@ -193,11 +193,11 @@ def create_folder(body: FolderBody):
     with _folders_lock:
         folders = _load_folders()
         if path in folders:
-            raise HTTPException(409, f"Folder '{path}' already exists.")
+            raise HTTPException(409, f"Group '{path}' already exists.")
         if "/" in path:
             parent = path.rsplit("/", 1)[0]
             if parent not in folders:
-                raise HTTPException(422, f"Parent folder '{parent}' does not exist.")
+                raise HTTPException(422, f"Parent group '{parent}' does not exist.")
         folders.append(path)
         _save_folders(folders)
     return {"path": path}
@@ -207,16 +207,16 @@ def create_folder(body: FolderBody):
 def delete_folder(path: str):
     path = _validate_folder_path(path)
     if path == DEFAULT_FOLDER:
-        raise HTTPException(422, "The General folder cannot be deleted.")
+        raise HTTPException(422, "The General group cannot be deleted.")
     with _folders_lock:
         folders = _load_folders()
         if path not in folders:
-            raise HTTPException(404, f"No folder named '{path}'.")
+            raise HTTPException(404, f"No group named '{path}'.")
         if any(f.startswith(path + "/") for f in folders):
-            raise HTTPException(409, "Folder has subfolders; delete them first.")
+            raise HTTPException(409, "Group has subgroups; delete them first.")
         if any(s["group"] == path for s in mux.list_sessions()):
             raise HTTPException(
-                409, "Folder still has sessions; terminate them first.")
+                409, "Group still has sessions; terminate them first.")
         folders.remove(path)
         _save_folders(folders)
 
@@ -317,7 +317,7 @@ def update_session(name: str, body: RenameBody):
     if body.group is not None:
         group = body.group.strip().strip("/")
         if group not in _load_folders():
-            raise HTTPException(422, f"Unknown folder '{group}'.")
+            raise HTTPException(422, f"Unknown group '{group}'.")
         if ui_agent.manager.exists(name):
             ui_agent.manager.set_group(name, group)
         else:
@@ -514,6 +514,8 @@ async def ui_ws(client: WebSocket):
                     await runner.enqueue(text)
             elif kind == "interrupt":
                 await runner.interrupt()
+            elif kind == "answer":
+                runner.resolve_ask(data.get("id"), data.get("answers") or [])
             elif kind == "set_model":
                 await runner.set_model(data.get("model"))
     except (WebSocketDisconnect, RuntimeError):

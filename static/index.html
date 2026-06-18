@@ -7,18 +7,25 @@
   <link rel="icon" type="image/svg+xml" href="logo.svg">
   <link rel="stylesheet" href="style.css">
   <script>
-    // Apply the saved theme before first paint (no flash). Default follows the OS.
-    if (localStorage.getItem('agentpeek-theme') === 'light' ||
-        (!localStorage.getItem('agentpeek-theme') && matchMedia('(prefers-color-scheme: light)').matches))
+    // Apply the saved theme before first paint (no flash). Default is dark;
+    // light only when the user has explicitly chosen it.
+    if (localStorage.getItem('agentpeek-theme') === 'light')
       document.documentElement.classList.add('light');
   </script>
 </head>
 <body>
   <aside id="sidebar">
     <div id="sidebar-top">
+      <div id="brand">
+        <img src="logo.svg" alt="" width="18" height="18">
+        <span>agentpeek</span>
+      </div>
       <button id="create-btn">+ Create Session</button>
-      <button id="add-folder-btn" title="New folder">
+      <button id="add-folder-btn" title="New group">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+      </button>
+      <button id="folder-view-btn" title="Group by folder location">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/></svg>
       </button>
       <button id="theme-toggle" title="Toggle light/dark theme">◑</button>
       <button id="collapse-btn" title="Collapse sidebar">«</button>
@@ -93,7 +100,7 @@
         <input id="c-name" autocomplete="off" spellcheck="false" placeholder="e.g. web-build">
       </label>
       <div class="field">
-        <span class="field-label">Folder</span>
+        <span class="field-label">Group</span>
         <div id="c-folders"></div>
       </div>
       <div class="field">

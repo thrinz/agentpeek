@@ -10,9 +10,22 @@ import re
 import subprocess
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+# Session names additionally allow spaces. Still no '/' or '.', so they stay
+# safe as tmux targets and as transcript filenames (<name>.json).
+SESSION_RE = re.compile(r"^[A-Za-z0-9 _-]+$")
 
 # pane_current_command values that mean "idle shell" rather than a busy session
 SHELLS = {"bash", "zsh", "sh", "fish", "dash", "ash", "ksh", "tcsh", "csh"}
+
+# Substrings that only appear when the foreground program is blocked on a user
+# decision (Claude's permission / selection prompts) rather than idling at its
+# input box. Matched against the visible pane, so an answered prompt that has
+# scrolled off no longer counts.
+WAITING_MARKERS = (
+    "Enter to select",                 # selection / plan prompts
+    "Do you want to proceed",          # tool-permission prompts
+    "No, and tell Claude what to do",  # permission-prompt option text
+)
 
 
 class MuxError(Exception):
@@ -32,9 +45,9 @@ class NoSuchSession(MuxError):
 
 
 def validate_name(name: str) -> None:
-    if not name or not NAME_RE.match(name):
+    if not name or not SESSION_RE.match(name):
         raise InvalidName(
-            "Session names may only contain letters, digits, '-' and '_'."
+            "Session names may only contain letters, digits, spaces, '-' and '_'."
         )
 
 
@@ -49,11 +62,22 @@ def has(name: str) -> bool:
     return _tmux("has-session", "-t", f"={name}", check=False).returncode == 0
 
 
+def _pane_waiting(name: str) -> bool:
+    """True when the session's visible pane shows a prompt awaiting the user's
+    decision (so it should flag for attention even though it isn't generating)."""
+    # "=NAME:" targets the session's active pane (a bare "=NAME" is read as a
+    # pane name by capture-pane and fails to resolve).
+    out = _tmux("capture-pane", "-p", "-t", f"={name}:", check=False)
+    if out.returncode != 0:
+        return False
+    return any(m in out.stdout for m in WAITING_MARKERS)
+
+
 def list_sessions() -> list[dict]:
     proc = _tmux(
         "list-sessions",
         "-F",
-        "#{session_name}\t#{session_created}\t#{session_attached}\t#{@agentpeek_group}\t#{@agentpeek_cwd}",
+        "#{session_name}\t#{session_created}\t#{session_attached}\t#{@agentpeek_group}\t#{@agentpeek_cwd}\t#{window_activity}",
         check=False,
     )
     if proc.returncode != 0:
@@ -83,14 +107,22 @@ def list_sessions() -> list[dict]:
 
     sessions = []
     for line in proc.stdout.splitlines():
-        name, created, attached, group, cwd = line.split("\t", 4)
+        name, created, attached, group, cwd, activity = line.split("\t", 5)
+        busy = name in foreground
         sessions.append(
             {
                 "name": name,
                 "created": int(created),
                 "attached": attached != "0",
-                "busy": name in foreground,
+                "busy": busy,
                 "foreground": foreground.get(name),
+                # A busy session can be actively working or blocked waiting for
+                # the user to answer a prompt; only check the pane when busy.
+                "waiting": busy and _pane_waiting(name),
+                # Epoch of the window's last output (window_activity); advances
+                # only while the foreground program is actually writing, so a
+                # stalled value means it finished and is idle at its prompt.
+                "activity": int(activity) if activity else 0,
                 "attach_command": f"tmux attach -t {name}",
                 # CLI-created sessions have no group option -> General bucket
                 "group": group or "General",

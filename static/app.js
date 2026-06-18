@@ -3,6 +3,9 @@
 const $ = (id) => document.getElementById(id);
 const NAME_RE = /^[A-Za-z0-9_-]+$/;
 const NAME_HINT = "Letters, digits, '-' and '_' only.";
+// Session names additionally allow spaces (groups/folders stay strict).
+const SESSION_RE = /^[A-Za-z0-9 _-]+$/;
+const SESSION_HINT = "Letters, digits, spaces, '-' and '_' only.";
 const DEFAULT_FOLDER = 'General';
 
 let sessions = [];
@@ -17,6 +20,15 @@ function sshAttachCommand(name) {
 
 // remembered UI state (folder open/closed and sidebar collapse only)
 const groupState = JSON.parse(localStorage.getItem('agentpeek-groups') || '{}');
+
+// Sidebar grouping mode: false = group by the logical group, true = group by
+// each session's actual folder location (its working directory).
+let groupByFolder = localStorage.getItem('agentpeek-groupby') === 'folder';
+
+// Last-seen tmux activity epoch per shell session, used to tell "actively
+// generating" (timestamp advancing between polls) from "process idle at its
+// prompt" (timestamp frozen). UI chat sessions report this precisely via busy.
+let prevActivity = {};
 
 // ntfy topics the user has used before, for the create-dialog dropdown.
 const NOTIFY_KEY = 'agentpeek-notify-topics';
@@ -110,7 +122,7 @@ async function addFolder(parent) {
   let name = '', error = '';
   for (;;) {
     name = await ask({
-      title: parent ? `New subfolder in "${parent}"` : 'New folder',
+      title: parent ? `New subgroup in "${parent}"` : 'New group',
       msg: NAME_HINT, input: name, okLabel: 'Create', error,
     });
     if (name === null) return;
@@ -126,8 +138,8 @@ async function addFolder(parent) {
 
 async function deleteFolder(path) {
   const ok = await ask({
-    title: 'Delete folder',
-    msg: `Delete folder "${path}"?`,
+    title: 'Delete group',
+    msg: `Delete group "${path}"?`,
     okLabel: 'Delete', danger: true,
   });
   if (!ok) return;
@@ -335,13 +347,16 @@ async function newDir() {
   await buildDirTree(rel);
 }
 
-function openCreateDialog(preselectGroup = null) {
+function openCreateDialog(preselectGroup = null, preselectCwd = null) {
   $('c-name').value = '';
   $('c-error').textContent = '';
   for (const id of ['c-name', 'c-folders', 'c-dirtree']) {
     $(id).classList.remove('invalid');
   }
-  cstate.group = preselectGroup; // mandatory — the user must pick a folder every time
+  // Default to the General group when the caller didn't preselect one (and it
+  // still exists); the user can pick another in the folder picker.
+  cstate.group = preselectGroup
+    || (config.folders.includes(DEFAULT_FOLDER) ? DEFAULT_FOLDER : null);
   cstate.mode = 'ai';
   cstate.type = 'shell';
   cstate.cwd = null;   // mandatory — a real directory, not the projects root
@@ -361,8 +376,9 @@ function openCreateDialog(preselectGroup = null) {
   renderTopicOptions();
   updateNotifyVisibility();
 
-  // fresh tree rooted at projects/, expanded one level, nothing preselected
-  buildDirTree();
+  // fresh tree rooted at projects/, expanded one level; when launched from a
+  // folder-view menu, expand down to and select that directory
+  buildDirTree(preselectCwd);
 
   $('cdlg').showModal();
   $('c-name').focus();
@@ -397,13 +413,13 @@ function updateNotifyVisibility() {
 
 async function submitCreate() {
   const name = $('c-name').value.trim();
-  if (!NAME_RE.test(name)) {
-    $('c-error').textContent = NAME_HINT;
+  if (!SESSION_RE.test(name)) {
+    $('c-error').textContent = SESSION_HINT;
     $('c-name').classList.add('invalid');
     return;
   }
   if (!cstate.group) {
-    $('c-error').textContent = 'Please choose a folder.';
+    $('c-error').textContent = 'Please choose a group.';
     $('c-folders').classList.add('invalid');
     return;
   }
@@ -450,11 +466,11 @@ async function renameSession(s) {
   let name = s.name, error = '';
   for (;;) {
     name = await ask({
-      title: `Rename "${s.name}"`, msg: NAME_HINT,
+      title: `Rename "${s.name}"`, msg: SESSION_HINT,
       input: name, okLabel: 'Rename', error,
     });
     if (name === null || name === s.name) return;
-    if (!NAME_RE.test(name)) { error = NAME_HINT; continue; }
+    if (!SESSION_RE.test(name)) { error = SESSION_HINT; continue; }
     try {
       await api.rename(s.name, name);
       if (active === s.name) active = name; // tmux keeps the client attached
@@ -525,7 +541,8 @@ function detach() {
 
 function sessionRow(s) {
   const li = document.createElement('div');
-  li.className = 'session' + (s.name === active ? ' active' : '');
+  li.className = 'session' + (s.name === active ? ' active' : '')
+    + (s.working ? ' working' : '');
 
   const dot = document.createElement('span');
   dot.className = 'dot';
@@ -592,7 +609,7 @@ function folderSection(path, buckets, children) {
   const menuBtn = document.createElement('button');
   menuBtn.className = 'menu-btn';
   menuBtn.textContent = '⋮';
-  menuBtn.title = 'Folder actions';
+  menuBtn.title = 'Group actions';
   menuBtn.addEventListener('click', (e) => {
     e.preventDefault(); // don't toggle the <details>
     e.stopPropagation();
@@ -617,9 +634,69 @@ function folderSection(path, buckets, children) {
   return det;
 }
 
+// One sidebar section per distinct folder location, used when grouping by
+// the actual working directory rather than the logical group.
+function locationSection(path, items) {
+  const det = document.createElement('details');
+  det.className = 'group';
+  const stateKey = `loc:${path}`;
+  det.open = groupState[stateKey] !== false;
+  det.addEventListener('toggle', () => {
+    groupState[stateKey] = det.open;
+    localStorage.setItem('agentpeek-groups', JSON.stringify(groupState));
+  });
+
+  const sum = document.createElement('summary');
+  const label = document.createElement('span');
+  label.textContent = path === NO_LOCATION ? path : path.split('/').filter(Boolean).pop();
+  label.title = path; // full path on hover
+  sum.appendChild(label);
+
+  const count = document.createElement('span');
+  count.className = 'count';
+  count.textContent = items.length;
+  sum.appendChild(count);
+
+  // Real directories get a ⋮ menu to spin up a new session there; the synthetic
+  // "(no location)" bucket has no directory to create one in.
+  if (path !== NO_LOCATION) {
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'menu-btn';
+    menuBtn.textContent = '⋮';
+    menuBtn.title = 'Folder actions';
+    menuBtn.addEventListener('click', (e) => {
+      e.preventDefault(); // don't toggle the <details>
+      e.stopPropagation();
+      openLocationMenu(path, menuBtn);
+    });
+    sum.appendChild(menuBtn);
+  }
+  det.appendChild(sum);
+
+  const body = document.createElement('div');
+  body.className = 'group-body';
+  for (const s of items) body.appendChild(sessionRow(s));
+  det.appendChild(body);
+  return det;
+}
+
+const NO_LOCATION = '(no location)';
+
+function renderByFolder(list) {
+  const buckets = new Map();
+  for (const s of sessions) {
+    const key = s.cwd || NO_LOCATION;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(s);
+  }
+  const paths = [...buckets.keys()].sort((a, b) => a.localeCompare(b));
+  for (const p of paths) list.appendChild(locationSection(p, buckets.get(p)));
+}
+
 function render() {
   const list = $('session-list');
   list.textContent = '';
+  if (groupByFolder) { renderByFolder(list); return; }
   const valid = new Set(config.folders);
   const buckets = new Map(config.folders.map((f) => [f, []]));
   for (const s of sessions) {
@@ -675,7 +752,7 @@ function openSessionMenu(s, anchor) {
     ['Rename…', () => renameSession(s), ''],
   ];
   if (config.folders.length > 1) {
-    items.push(['Move to folder…', () => moveSession(s, anchor), '']);
+    items.push(['Move to group…', () => moveSession(s, anchor), '']);
   }
   if (s.kind !== 'ui') {
     items.push(['Copy SSH attach command', () => copyText(sshAttachCommand(s.name)), '']);
@@ -691,7 +768,7 @@ function sessionInfo(s) {
   const location = s.cwd || 'unknown (created from the CLI)';
   ask({
     title: `"${s.name}"`,
-    msg: `Folder: ${s.group}\nLocation: ${location}`,
+    msg: `Group: ${s.group}\nLocation: ${location}`,
     okLabel: 'OK',
   });
 }
@@ -699,7 +776,7 @@ function sessionInfo(s) {
 // Second-level menu: pick a destination folder for the session.
 function moveSession(s, anchor) {
   const targets = config.folders.filter((f) => f !== s.group);
-  if (!targets.length) { flash('No other folder to move to.'); return; }
+  if (!targets.length) { flash('No other group to move to.'); return; }
   showMenu(targets.map((f) => [f.replaceAll('/', ' / '),
     () => doMove(s, f), '']), anchor);
 }
@@ -717,12 +794,28 @@ function openFolderMenu(path, anchor) {
   const items = [];
   items.push(['Create session…', () => openCreateDialog(path), '']);
   if (path.split('/').length < MAX_FOLDER_DEPTH) {
-    items.push(['New subfolder…', () => addFolder(path), '']);
+    items.push(['New subgroup…', () => addFolder(path), '']);
   }
   if (path !== DEFAULT_FOLDER) {
-    items.push(['Delete folder…', () => deleteFolder(path), 'danger']);
+    items.push(['Delete group…', () => deleteFolder(path), 'danger']);
   }
   if (items.length) showMenu(items, anchor);
+}
+
+// Folder-view (group-by-location) menu: create a new session in this directory.
+function openLocationMenu(path, anchor) {
+  showMenu([
+    ['Create session…', () => openCreateDialog(null, cwdToRel(path)), ''],
+  ], anchor);
+}
+
+// Convert an absolute session cwd to a path relative to the projects root, as
+// the create dialog's directory tree expects. Returns null if it doesn't live
+// under the root (then the dialog just opens with nothing preselected).
+function cwdToRel(abs) {
+  const marker = `/${config.root}/`;
+  const i = abs.indexOf(marker);
+  return i === -1 ? null : abs.slice(i + marker.length);
 }
 
 document.addEventListener('click', closeMenu);
@@ -735,6 +828,22 @@ async function refresh() {
   } catch {
     return; // keep last known state; next poll self-corrects (NFR-3)
   }
+  // Decide which sessions are actively generating. UI chat: busy is exact.
+  // Shell: busy means a program is running, so additionally require the pane's
+  // activity timestamp to have advanced since the previous poll.
+  const nextActivity = {};
+  for (const s of sessions) {
+    if (s.kind === 'ui') {
+      s.working = !!s.busy;
+    } else {
+      const prev = prevActivity[s.name];
+      const generating = !!s.busy && prev !== undefined && s.activity > prev;
+      // Also flag sessions blocked on a prompt awaiting the user's answer.
+      s.working = generating || !!s.waiting;
+    }
+    nextActivity[s.name] = s.activity || 0;
+  }
+  prevActivity = nextActivity;
   if (active && !sessions.some((s) => s.name === active)) {
     detach(); // killed from the CLI while we were attached
   } else {
@@ -904,6 +1013,184 @@ function toolUseEl(ev) {
   return d;
 }
 
+/* --- interactive ask_user card (tabs + options + custom "Other" + submit) --- */
+
+// Build the per-question selection state and an interactive tabbed card. Each
+// question is a tab; options are chips; an "Other…" box accepts a custom answer.
+function askCard(ev) {
+  const questions = ev.questions || [];
+  const card = document.createElement('div');
+  card.className = 'msg ask';
+  card.dataset.askId = ev.id;
+  // selection model: per question, a Set of chosen option labels + custom text
+  card._sel = questions.map(() => new Set());
+  card._custom = questions.map(() => '');
+  card._questions = questions;
+
+  const tabs = document.createElement('div');
+  tabs.className = 'ask-tabs';
+  const panels = document.createElement('div');
+  panels.className = 'ask-panels';
+
+  questions.forEach((q, qi) => {
+    const tab = document.createElement('button');
+    tab.className = 'ask-tab' + (qi === 0 ? ' active' : '');
+    tab.textContent = q.header || `Q${qi + 1}`;
+    tab.addEventListener('click', () => {
+      tabs.querySelectorAll('.ask-tab').forEach((t) => t.classList.remove('active'));
+      panels.querySelectorAll('.ask-panel').forEach((p) => p.classList.remove('active'));
+      tab.classList.add('active');
+      panel.classList.add('active');
+    });
+    tabs.appendChild(tab);
+
+    const panel = document.createElement('div');
+    panel.className = 'ask-panel' + (qi === 0 ? ' active' : '');
+
+    const qtext = document.createElement('div');
+    qtext.className = 'ask-q';
+    qtext.textContent = q.question || '';
+    panel.appendChild(qtext);
+    if (q.multiSelect) {
+      const hint = document.createElement('div');
+      hint.className = 'ask-hint';
+      hint.textContent = 'Select all that apply';
+      panel.appendChild(hint);
+    }
+
+    (q.options || []).forEach((opt) => {
+      const o = document.createElement('button');
+      o.className = 'ask-opt';
+      o.dataset.label = opt.label;
+      const lab = document.createElement('div');
+      lab.className = 'ask-opt-label';
+      lab.textContent = opt.label;
+      o.appendChild(lab);
+      if (opt.description) {
+        const d = document.createElement('div');
+        d.className = 'ask-opt-desc';
+        d.textContent = opt.description;
+        o.appendChild(d);
+      }
+      o.addEventListener('click', () => toggleOpt(card, qi, panel, opt.label, q.multiSelect));
+      panel.appendChild(o);
+    });
+
+    // "Other…" free-text answer
+    const other = document.createElement('input');
+    other.className = 'ask-other';
+    other.placeholder = 'Other… (type your own answer)';
+    other.addEventListener('input', () => {
+      card._custom[qi] = other.value.trim();
+      // a non-empty custom answer clears option picks in single-select mode
+      if (!q.multiSelect && card._custom[qi]) {
+        card._sel[qi].clear();
+        panel.querySelectorAll('.ask-opt.sel').forEach((b) => b.classList.remove('sel'));
+      }
+      markTabDone(tab, hasAnswer(card, qi));
+    });
+    panel.appendChild(other);
+    panels.appendChild(panel);
+  });
+
+  card.appendChild(tabs);
+  card.appendChild(panels);
+
+  const footer = document.createElement('div');
+  footer.className = 'ask-footer';
+  const err = document.createElement('span');
+  err.className = 'ask-error';
+  const submit = document.createElement('button');
+  submit.className = 'ask-submit';
+  submit.textContent = 'Submit';
+  submit.addEventListener('click', () => submitAsk(card, err));
+  footer.appendChild(err);
+  footer.appendChild(submit);
+  card.appendChild(footer);
+  return card;
+}
+
+function hasAnswer(card, qi) {
+  return card._sel[qi].size > 0 || !!card._custom[qi];
+}
+
+function markTabDone(tab, done) {
+  tab.classList.toggle('done', done);
+}
+
+function toggleOpt(card, qi, panel, label, multi) {
+  const sel = card._sel[qi];
+  if (multi) {
+    if (sel.has(label)) sel.delete(label); else sel.add(label);
+  } else {
+    sel.clear();
+    sel.add(label);
+    card._custom[qi] = '';
+    const ob = panel.querySelector('.ask-other');
+    if (ob) ob.value = '';
+  }
+  panel.querySelectorAll('.ask-opt').forEach((b) => {
+    b.classList.toggle('sel', sel.has(b.dataset.label));
+  });
+  const tab = card.querySelectorAll('.ask-tab')[qi];
+  if (tab) markTabDone(tab, hasAnswer(card, qi));
+}
+
+// Collect [labels…, custom?] per question; return null if any is unanswered.
+function collectAnswers(card) {
+  const out = [];
+  for (let qi = 0; qi < card._questions.length; qi++) {
+    const picks = [...card._sel[qi]];
+    if (card._custom[qi]) picks.push(card._custom[qi]);
+    if (!picks.length) return { error: qi };
+    out.push(picks);
+  }
+  return { answers: out };
+}
+
+function submitAsk(card, err) {
+  const res = collectAnswers(card);
+  if (res.error !== undefined) {
+    err.textContent = 'Please answer every question.';
+    const tab = card.querySelectorAll('.ask-tab')[res.error];
+    if (tab) tab.click();
+    return;
+  }
+  if (!chatWs || chatWs.readyState !== WebSocket.OPEN) {
+    err.textContent = 'Reconnecting — try again in a moment.';
+    return;
+  }
+  chatWs.send(JSON.stringify({ type: 'answer', id: card.dataset.askId, answers: res.answers }));
+  lockAskCardEl(card, res.answers); // optimistic; server echoes ask_answered
+}
+
+// Lock a card by id (used when ask_answered arrives from history or live).
+function lockAskCard(id, answers) {
+  const card = document.querySelector(`.msg.ask[data-ask-id="${CSS.escape(id)}"]`);
+  if (card) lockAskCardEl(card, answers);
+}
+
+function lockAskCardEl(card, answers) {
+  if (card.classList.contains('answered')) return;
+  card.classList.add('answered');
+  const chosen = new Set();
+  (answers || []).forEach((picks) => (picks || []).forEach((p) => chosen.add(p)));
+  card.querySelectorAll('.ask-opt').forEach((b) => {
+    b.disabled = true;
+    b.classList.toggle('sel', chosen.has(b.dataset.label));
+  });
+  // options/free-text locked; tabs stay clickable so answers can be reviewed
+  card.querySelectorAll('.ask-other').forEach((e) => { e.disabled = true; });
+  const footer = card.querySelector('.ask-footer');
+  if (footer) {
+    footer.textContent = '';
+    const done = document.createElement('span');
+    done.className = 'ask-done';
+    done.textContent = '✓ Answered';
+    footer.appendChild(done);
+  }
+}
+
 function resultEl(ev) {
   const el = document.createElement('div');
   el.className = 'msg result' + (ev.is_error ? ' err' : '');
@@ -930,6 +1217,8 @@ function renderChatEvent(ev, scroll) {
     if (ttsOn) speak(ev.text);
   } else if (ev.role === 'thinking') el = collapsible('thinking', 'Thinking', ev.text, true);
   else if (ev.role === 'tool_use') el = toolUseEl(ev);
+  else if (ev.role === 'ask') el = askCard(ev);
+  else if (ev.role === 'ask_answered') { lockAskCard(ev.id, ev.answers); return; }
   else if (ev.role === 'tool_result') el = collapsible('tool-result', 'Tool result', ev.text, false);
   else if (ev.role === 'result') {
     el = resultEl(ev);
@@ -1038,12 +1327,15 @@ function openChat(name) {
   active = name; activeKind = 'ui'; chatSession = name;
   showView('ui');
   showPasteHint(false);
-  $('chat-title').textContent = name;
+  const s = sessions.find((x) => x.name === name && x.kind === 'ui');
+  // Show the session's folder location in the header; fall back to the name
+  // for sessions created from the CLI that have no recorded cwd.
+  $('chat-title').textContent = (s && s.cwd) || name;
+  $('chat-title').title = name;
   $('chat-log').textContent = '';
   chatTotalCost = 0; updateCost(); applyCostVisibility();
   clearAttachments();
   setChatBusy(false);
-  const s = sessions.find((x) => x.name === name && x.kind === 'ui');
   chatModel = (s && s.model) || 'opus';
   $('chat-model').value = chatModel;
   applyBackendUI();
@@ -1418,6 +1710,14 @@ $('theme-toggle').addEventListener('click', () => {
 
 $('create-btn').addEventListener('click', openCreateDialog);
 $('add-folder-btn').addEventListener('click', () => addFolder(null));
+
+$('folder-view-btn').classList.toggle('active', groupByFolder);
+$('folder-view-btn').addEventListener('click', () => {
+  groupByFolder = !groupByFolder;
+  localStorage.setItem('agentpeek-groupby', groupByFolder ? 'folder' : 'group');
+  $('folder-view-btn').classList.toggle('active', groupByFolder);
+  render();
+});
 $('c-ok').addEventListener('click', submitCreate);
 $('c-cancel').addEventListener('click', () => $('cdlg').close());
 $('c-newdir').addEventListener('click', newDir);

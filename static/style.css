@@ -58,8 +58,11 @@ body.collapsed #sidebar { display: none; }
    so a narrow sidebar never splits "Create Session" across two lines. */
 #sidebar-top { display: flex; flex-wrap: wrap; gap: 6px; }
 #sidebar-top #create-btn { flex: 1 1 100%; white-space: nowrap; }
+#brand { flex: 1 1 100%; display: flex; align-items: center; gap: 7px; padding: 1px 2px 5px; }
+#brand img { display: block; }
+#brand span { font-size: 15px; font-weight: 700; letter-spacing: -0.015em; color: var(--fg); }
 
-#add-folder-btn, #theme-toggle {
+#add-folder-btn, #folder-view-btn, #theme-toggle {
   background: var(--bg-hover);
   color: var(--fg-dim);
   border: 1px solid var(--border);
@@ -69,7 +72,8 @@ body.collapsed #sidebar { display: none; }
   display: flex;
   align-items: center;
 }
-#add-folder-btn:hover, #theme-toggle:hover { color: var(--fg); background: var(--bg-active); }
+#add-folder-btn:hover, #folder-view-btn:hover, #theme-toggle:hover { color: var(--fg); background: var(--bg-active); }
+#folder-view-btn.active { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
 #theme-toggle { font-size: 15px; line-height: 1; }
 
 #collapse-btn, #expand-btn {
@@ -190,6 +194,16 @@ body.collapsed #expand-btn { display: block; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A session actively generating content gets a pulsing accent dot so it stands
+   out in the list. The name styling is intentionally left unchanged. */
+.session.working .dot { color: var(--accent); animation: session-pulse 1.3s ease-in-out infinite; }
+@keyframes session-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session.working .dot { animation: none; }
+}
 .session .busy {
   font-size: 11px;
   color: #e8b75a;
@@ -242,6 +256,9 @@ body.collapsed #expand-btn { display: block; }
 #main { position: relative; }
 
 /* Unobtrusive "how to paste" hint over the terminal; dismissible (remembered). */
+/* The author display:flex below would otherwise defeat the [hidden] attribute
+   that showPasteHint() toggles, leaving the hint visible in chat / empty views. */
+#term-hint[hidden] { display: none; }
 #term-hint {
   position: absolute;
   right: 12px;
@@ -346,6 +363,8 @@ body.collapsed #expand-btn { display: block; }
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+  /* The keybar is for terminal sessions only — never show it over the UI chat. */
+  #main.chatting #keybar { display: none !important; }
 }
 
 /* ---------- dialog ---------- */
@@ -680,6 +699,60 @@ dialog menu button {
   align-self: flex-start; background: rgba(224,92,92,.12); border: 1px solid var(--danger);
   color: var(--danger); border-radius: 8px; padding: 8px 12px; font-size: 13px;
 }
+
+/* interactive ask_user card */
+.msg.ask {
+  align-self: flex-start; width: 100%; max-width: 760px;
+  background: var(--bg-side); border: 1px solid var(--accent);
+  border-radius: 10px; overflow: hidden;
+}
+.msg.ask.answered { border-color: var(--border); opacity: 0.92; }
+.ask-tabs {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  padding: 8px 8px 0; border-bottom: 1px solid var(--border);
+}
+.ask-tab {
+  background: var(--bg-hover); color: var(--fg-dim);
+  border: 1px solid var(--border); border-bottom: 0;
+  border-radius: 8px 8px 0 0; padding: 5px 12px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.ask-tab:hover { color: var(--fg); }
+.ask-tab.active { background: var(--bg-side); color: var(--fg); border-color: var(--accent); }
+.ask-tab.done::after { content: ' ✓'; color: var(--accent); }
+.ask-panels { padding: 12px; }
+.ask-panel { display: none; flex-direction: column; gap: 8px; }
+.ask-panel.active { display: flex; }
+.ask-q { font-size: 14px; font-weight: 600; color: var(--fg); line-height: 1.45; }
+.ask-hint { font-size: 11px; color: var(--fg-dim); margin-top: -4px; }
+.ask-opt {
+  text-align: left; background: var(--bg-hover); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  cursor: pointer; display: flex; flex-direction: column; gap: 2px;
+}
+.ask-opt:hover:not(:disabled) { border-color: var(--accent); }
+.ask-opt.sel { border-color: var(--accent); background: var(--bg-active); }
+.ask-opt.sel .ask-opt-label::before { content: '✓ '; color: var(--accent); }
+.ask-opt:disabled { cursor: default; }
+.ask-opt-label { font-size: 13px; font-weight: 600; }
+.ask-opt-desc { font-size: 12px; color: var(--fg-dim); line-height: 1.4; }
+.ask-other {
+  background: var(--bg-hover); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; font-family: inherit;
+}
+.ask-other:focus { outline: none; border-color: var(--accent); }
+.ask-footer {
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  padding: 0 12px 12px;
+}
+.ask-error { margin-right: auto; font-size: 12px; color: var(--danger); }
+.ask-done { font-size: 12px; color: var(--accent); font-weight: 600; }
+.ask-submit {
+  background: var(--accent); color: var(--on-accent); border: 0;
+  border-radius: 8px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.ask-submit:hover { opacity: 0.9; }
 
 .copy-msg {
   position: absolute; top: 4px; right: 4px; opacity: 0;
