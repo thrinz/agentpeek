@@ -1,0 +1,34 @@
+# Run agentpeek from the published image:  docker compose up -d
+# Build locally instead:  uncomment `build: .` and run  docker compose up -d --build
+services:
+  agentpeek:
+    image: ghcr.io/thrinz/agentpeek:latest
+    # build: .
+    restart: unless-stopped
+    # Bound to localhost ON PURPOSE — agentpeek runs an autonomous agent
+    # (bypassPermissions). Expose it over Tailscale, never the public internet:
+    #   tailscale serve --bg --https=9443 http://127.0.0.1:8090
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      # UI (chat) mode needs Claude auth. Easiest: an API key here. Alternatively
+      # mount your host ~/.claude (below) to reuse a subscription login, or sign in
+      # afterward from the in-app Claude chip (persists in the config volume).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Optional browser login password (hashed). Generate one with:
+      #   docker run --rm ghcr.io/thrinz/agentpeek:latest \
+      #     python -m app hash-password   # then paste the value below
+      # AGENTPEEK_PASSWORD_HASH: "pbkdf2_sha256$..."
+    volumes:
+      # The agent's working tree — your real projects, edited in place. Override
+      # the host path with PROJECTS_DIR=/path docker compose up -d.
+      - ${PROJECTS_DIR:-./projects}:/root/projects
+      # App state: folders, UI sessions, transcripts, the secrets env file.
+      - agentpeek-config:/root/.config/agentpeek
+      # Claude auth — persist sign-in across restarts. To reuse your host login
+      # instead of an API key, replace this with:  - ~/.claude:/root/.claude
+      - agentpeek-claude:/root/.claude
+
+volumes:
+  agentpeek-config:
+  agentpeek-claude:

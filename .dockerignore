@@ -1,0 +1,14 @@
+# keep the build context small + don't bake local state into the image
+.git
+.github
+.venv
+**/__pycache__
+*.pyc
+.claude
+.claude/settings.local.json
+site
+deploy
+systemd
+launchd
+*.log
+.DS_Store

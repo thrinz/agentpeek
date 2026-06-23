@@ -147,6 +147,66 @@ tailscale serve --bg --https=9443 http://127.0.0.1:8090
 # → https://<your-host>.<your-tailnet>.ts.net:9443
 ```
 
+### macOS
+
+The app is the same on macOS; only the installer differs (Homebrew + **launchd**
+instead of apt + systemd). Use `setup-macos.sh` rather than `setup.sh`:
+
+```bash
+# prerequisite: Homebrew (https://brew.sh) and Python 3.10+
+git clone https://github.com/thrinz/agentpeek.git && cd agentpeek
+./setup-macos.sh
+# → open http://localhost:8090
+```
+
+It `brew install`s `tmux` and `ttyd`, installs Claude Code, creates the venv, and
+renders the templates in [`launchd/`](launchd/) into `~/Library/LaunchAgents`
+(`dev.agentpeek.tmux`, `dev.agentpeek.ttyd`, `dev.agentpeek.app`). The agents
+start at login (launchd `RunAtLoad`, no linger needed). Same port overrides apply
+(`AGENTPEEK_PORT=… AGENTPEEK_TTYD_PORT=… ./setup-macos.sh`). Manage it with:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/dev.agentpeek.app   # restart
+launchctl print     gui/$(id -u)/dev.agentpeek.app      # status
+tail -f ~/Library/Logs/agentpeek/app.log                # live logs
+launchctl bootout   gui/$(id -u)/dev.agentpeek.app      # stop
+```
+
+Tailscale on macOS installs from the [App Store / standalone app](https://tailscale.com/download),
+then `tailscale serve` works exactly as above.
+
+### Docker
+
+A prebuilt multi-arch image (`linux/amd64` + `linux/arm64`) is published to GitHub
+Container Registry, so you can run agentpeek anywhere Docker runs — **Linux, macOS,
+or Windows** (the container is Linux; Docker Desktop runs it on Mac/Windows). This
+is also the only way to run it on Windows, which can't host it natively.
+
+```bash
+docker pull ghcr.io/thrinz/agentpeek:latest
+```
+
+The quickest start is [`docker-compose.yml`](docker-compose.yml):
+
+```bash
+# the agent edits the projects tree you mount; set a Claude API key for UI mode
+PROJECTS_DIR=~/projects ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
+# → http://localhost:8090
+```
+
+It mounts your `projects` tree (the agent's working files), and named volumes for
+the app state (`~/.config/agentpeek`) and Claude auth (`~/.claude`) so they survive
+restarts. UI (chat) mode needs Claude signed in — pass `ANTHROPIC_API_KEY`, mount
+your host `~/.claude`, or sign in from the in-app Claude chip after first boot.
+
+> **Exposure:** the compose file binds **`127.0.0.1` on purpose** — agentpeek runs
+> an autonomous agent, so don't publish it on the open internet. Reach it over your
+> tailnet: `tailscale serve --bg --https=9443 http://127.0.0.1:8090`.
+
+The image is built and pushed by [`.github/workflows/docker.yml`](.github/workflows/docker.yml)
+on every push to `main` and every `v*` tag (no cloud credentials — it uses the
+built-in `GITHUB_TOKEN`).
+
 ## Folders & create options
 
 The sidebar groups sessions into collapsible **folders** you define yourself
