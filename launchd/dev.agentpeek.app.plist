@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- agentpeek: tmux session manager web app.
+     Template — setup-macos.sh fills in the placeholders and installs to ~/Library/LaunchAgents.
+     macOS counterpart of systemd/agentpeek.service. The ExecStart is wrapped by
+     bin/agentpeek-serve, which loads the optional secrets file (launchd has no
+     EnvironmentFile=) before exec'ing uvicorn. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.agentpeek.app</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@REPO@/bin/agentpeek-serve</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>@REPO@</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- UI mode spawns the 'claude' CLI; the native installer puts it in
+         ~/.local/bin, and tmux/ttyd live in the Homebrew prefix — neither is on
+         launchd's default PATH. -->
+    <key>PATH</key>
+    <string>@PATH@</string>
+    <key>AGENTPEEK_PORT</key>
+    <string>@PORT@</string>
+    <!-- Tell the app which port ttyd listens on, so its reverse proxy matches. -->
+    <key>AGENTPEEK_TTYD_PORT</key>
+    <string>@TTYD_PORT@</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@LOGDIR@/app.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGDIR@/app.log</string>
+</dict>
+</plist>

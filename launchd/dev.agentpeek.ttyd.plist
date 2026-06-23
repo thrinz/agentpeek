@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- agentpeek: ttyd web terminal (tmux attach bridge).
+     Template — setup-macos.sh fills in the placeholders and installs to ~/Library/LaunchAgents.
+     macOS counterpart of systemd/agentpeek-ttyd.service. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.agentpeek.ttyd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@TTYD@</string>
+    <string>--port</string>
+    <string>@TTYD_PORT@</string>
+    <string>--interface</string>
+    <string>127.0.0.1</string>
+    <string>--writable</string>
+    <string>--url-arg</string>
+    <string>--base-path</string>
+    <string>/term</string>
+    <string>-t</string>
+    <string>scrollback=10000</string>
+    <string>-t</string>
+    <string>disableLeaveAlert=true</string>
+    <string>@REPO@/bin/agentpeek-attach</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@PATH@</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- long-running bridge; relaunch if it ever exits (≈ Restart=on-failure) -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@LOGDIR@/ttyd.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGDIR@/ttyd.log</string>
+</dict>
+</plist>

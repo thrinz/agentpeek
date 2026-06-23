@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# launchd entrypoint for the agentpeek web app on macOS.
+#
+# systemd uses `EnvironmentFile=` to load ~/.config/agentpeek/agentpeek.env;
+# launchd has no equivalent, so we load it here before exec'ing uvicorn. The file
+# is read LITERALLY (no shell expansion) because the password hash contains '$'
+# (e.g. pbkdf2_sha256$200000$…) which a `source` would mangle. `export "$line"`
+# is safe: the contents of $line are not re-scanned for '$'.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$HOME/.config/agentpeek/agentpeek.env"
+
+if [[ -f "$ENV_FILE" ]]; then
+  while IFS= read -r line; do
+    case "$line" in ''|\#*) continue ;; esac   # skip blanks / comments
+    export "$line"
+  done < "$ENV_FILE"
+fi
+
+PORT="${AGENTPEEK_PORT:-8090}"
+exec "$REPO/.venv/bin/uvicorn" app.main:app --host 127.0.0.1 --port "$PORT"

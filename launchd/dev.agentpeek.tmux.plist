@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- agentpeek: tmux server (keeps a 'main' session so the server survives login).
+     Template — setup-macos.sh fills in the placeholders and installs to ~/Library/LaunchAgents.
+     macOS counterpart of systemd/agentpeek-tmux.service. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.agentpeek.tmux</string>
+  <!-- -A: attach-or-create, idempotent so reloads don't fail. Starts the tmux
+       server as a daemon, then exits (oneshot-like). Booting this agent out does
+       NOT kill the server or its sessions — the server detaches from launchd. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>@TMUX@</string>
+    <string>new-session</string>
+    <string>-A</string>
+    <string>-d</string>
+    <string>-s</string>
+    <string>main</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@PATH@</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@LOGDIR@/tmux.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGDIR@/tmux.log</string>
+</dict>
+</plist>
