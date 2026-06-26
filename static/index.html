@@ -52,6 +52,7 @@
     <div id="keybar">
       <button data-key="Escape">esc</button>
       <button data-key="Tab">tab</button>
+      <button data-key="Enter">enter</button>
       <button id="kb-ctrl" data-ctrl>ctrl</button>
       <button data-key="Up">↑</button>
       <button data-key="Down">↓</button>
@@ -59,7 +60,9 @@
       <button data-key="Right">→</button>
       <button data-scroll="up">⇞ scroll</button>
       <button data-scroll="down">scroll ⇟</button>
+      <button data-scroll="bottom" title="Jump to the latest output">⤓ end</button>
       <button id="kb-paste">paste</button>
+      <button id="kb-talk" title="Talk — speak, then it types into the session"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg><span>talk</span></button>
       <input id="kb-capture" inputmode="text" autocomplete="off"
              autocapitalize="none" autocorrect="off" spellcheck="false"
              aria-hidden="true" tabindex="-1">
@@ -79,6 +82,7 @@
       </div>
       <div id="chat-log"></div>
       <button id="chat-jump" hidden>↓ Latest</button>
+      <div id="chat-pastes" hidden></div>
       <div id="chat-attachments" hidden></div>
       <div id="chat-bar">
         <input id="chat-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden>
@@ -106,15 +110,19 @@
       <div class="field">
         <span class="field-label">Type</span>
         <div id="c-type" class="chips">
-          <button type="button" class="chip selected" data-type="shell">Shell (terminal)</button>
-          <button type="button" class="chip" data-type="ui">UI (Claude chat)</button>
+          <button type="button" class="chip selected" data-type="shell">Terminal UI (TUI)</button>
+          <button type="button" class="chip" data-type="ui">Chat UI</button>
         </div>
-      </div>
-      <div class="field" id="c-start-field">
-        <span class="field-label">Start with</span>
-        <div id="c-mode" class="chips">
-          <button type="button" class="chip selected" data-mode="ai" title="Runs cds (claude --dangerously-skip-permissions)">AI (Claude)</button>
-          <button type="button" class="chip" data-mode="shell">Shell</button>
+        <div id="c-start-field" class="radios" role="radiogroup" aria-label="Terminal UI mode">
+          <label class="radio">
+            <input type="radio" name="c-mode" value="ai" checked
+                   title="Runs cds (claude --dangerously-skip-permissions)">
+            <span>Claude Code <span class="radio-default">(default)</span></span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="c-mode" value="shell">
+            <span>Terminal</span>
+          </label>
         </div>
       </div>
       <div class="field" id="c-notify-field">

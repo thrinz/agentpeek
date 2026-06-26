@@ -362,8 +362,8 @@ function openCreateDialog(preselectGroup = null, preselectCwd = null) {
   cstate.cwd = null;   // mandatory — a real directory, not the projects root
 
   renderFolderPicker();
-  $('c-mode').querySelectorAll('.chip').forEach((b) => {
-    b.classList.toggle('selected', b.dataset.mode === cstate.mode);
+  document.querySelectorAll('input[name="c-mode"]').forEach((r) => {
+    r.checked = r.value === cstate.mode;
   });
   $('c-type').querySelectorAll('.chip').forEach((b) => {
     b.classList.toggle('selected', b.dataset.type === cstate.type);
@@ -580,7 +580,10 @@ function sessionRow(s) {
   });
   li.appendChild(menuBtn);
 
-  li.addEventListener('click', () => (s.kind === 'ui' ? openChat(s.name) : attach(s.name)));
+  li.addEventListener('click', () => {
+    if (s.kind === 'ui') openChat(s.name); else attach(s.name);
+    collapseSidebarOnMobile(); // give the session full width on touch screens
+  });
   return li;
 }
 
@@ -884,8 +887,17 @@ let chatReconnectDelay = 1000;
 let streamingEl = null;
 let chatTotalCost = 0;
 let chatModel = 'opus';
+// Shell-style input history for the chat composer: ↑ recalls older submitted
+// messages, ↓ walks back toward the live draft. Seeded from transcript history.
+let chatHistory = [];   // submitted messages, oldest → newest
+let histIndex = null;   // position while navigating; null = editing the live draft
+let histDraft = '';     // the draft text saved when navigation began
 let ttsOn = false;
 let recog = null;
+let micOn = false;   // user intends to keep dictating (survives silence stops)
+let micBase = '';    // stable (finalised) transcript; interim is shown after it
+let chatBusy = false;
+let _chatPlaceholder = null; // original composer placeholder, restored on unlock
 // Cost is only meaningful with an API key; subscription (Pro/Max) usage is
 // covered by the plan, so we hide the $ figure unless method === 'api_key'.
 let costVisible = false;
@@ -993,6 +1005,28 @@ function bubble(cls, text) {
   return el;
 }
 
+// Collapse an over-long message to a few lines with a "Show more" toggle, so a
+// big pasted block doesn't dominate the log. The full text stays available (and
+// the copy button always copies it). Measured after layout so it's accurate.
+const CLAMP_PX = 200;            // collapsed height (~10 lines)
+function maybeClamp(el) {
+  const md = el && el.querySelector('.md');
+  if (!md) return;
+  requestAnimationFrame(() => {
+    if (md.scrollHeight <= CLAMP_PX + 48) return;  // only slightly over → leave it
+    md.classList.add('clampable', 'clamped');
+    const btn = document.createElement('button');
+    btn.className = 'msg-more';
+    btn.textContent = 'Show more';
+    btn.addEventListener('click', () => {
+      const clamped = md.classList.toggle('clamped');
+      btn.textContent = clamped ? 'Show more' : 'Show less';
+      if (clamped) el.scrollIntoView({ block: 'nearest' });
+    });
+    el.appendChild(btn);
+  });
+}
+
 function collapsible(cls, label, text, asMd) {
   const d = document.createElement('details');
   d.className = 'msg ' + cls;
@@ -1022,13 +1056,18 @@ function askCard(ev) {
   const card = document.createElement('div');
   card.className = 'msg ask';
   card.dataset.askId = ev.id;
+  card.tabIndex = -1; // focusable so it can capture keyboard nav like the terminal
   // selection model: per question, a Set of chosen option labels + custom text
   card._sel = questions.map(() => new Set());
   card._custom = questions.map(() => '');
   card._questions = questions;
+  card._active = 0;   // active question/tab index
+  card._hl = questions.map(() => 0); // highlighted option per question (keyboard)
 
   const tabs = document.createElement('div');
   tabs.className = 'ask-tabs';
+  // single-question cards don't need a tab strip
+  tabs.hidden = questions.length < 2;
   const panels = document.createElement('div');
   panels.className = 'ask-panels';
 
@@ -1036,12 +1075,7 @@ function askCard(ev) {
     const tab = document.createElement('button');
     tab.className = 'ask-tab' + (qi === 0 ? ' active' : '');
     tab.textContent = q.header || `Q${qi + 1}`;
-    tab.addEventListener('click', () => {
-      tabs.querySelectorAll('.ask-tab').forEach((t) => t.classList.remove('active'));
-      panels.querySelectorAll('.ask-panel').forEach((p) => p.classList.remove('active'));
-      tab.classList.add('active');
-      panel.classList.add('active');
-    });
+    tab.addEventListener('click', () => activateTab(card, qi));
     tabs.appendChild(tab);
 
     const panel = document.createElement('div');
@@ -1058,9 +1092,9 @@ function askCard(ev) {
       panel.appendChild(hint);
     }
 
-    (q.options || []).forEach((opt) => {
+    (q.options || []).forEach((opt, oi) => {
       const o = document.createElement('button');
-      o.className = 'ask-opt';
+      o.className = 'ask-opt' + (oi === 0 ? ' hl' : '');
       o.dataset.label = opt.label;
       const lab = document.createElement('div');
       lab.className = 'ask-opt-label';
@@ -1072,7 +1106,11 @@ function askCard(ev) {
         d.textContent = opt.description;
         o.appendChild(d);
       }
-      o.addEventListener('click', () => toggleOpt(card, qi, panel, opt.label, q.multiSelect));
+      o.addEventListener('click', () => {
+        card._hl[qi] = oi;
+        panel.querySelectorAll('.ask-opt').forEach((b, i) => b.classList.toggle('hl', i === oi));
+        toggleOpt(card, qi, panel, opt.label, q.multiSelect);
+      });
       panel.appendChild(o);
     });
 
@@ -1100,13 +1138,20 @@ function askCard(ev) {
   footer.className = 'ask-footer';
   const err = document.createElement('span');
   err.className = 'ask-error';
+  const keyhint = document.createElement('span');
+  keyhint.className = 'ask-keyhint';
+  keyhint.textContent = '↑/↓ select · Enter submit · Esc cancel'
+    + (questions.length > 1 ? ' · ←/→ tabs' : '');
   const submit = document.createElement('button');
   submit.className = 'ask-submit';
   submit.textContent = 'Submit';
   submit.addEventListener('click', () => submitAsk(card, err));
   footer.appendChild(err);
+  footer.appendChild(keyhint);
   footer.appendChild(submit);
   card.appendChild(footer);
+
+  card.addEventListener('keydown', (e) => askCardKeydown(card, e));
   return card;
 }
 
@@ -1116,6 +1161,78 @@ function hasAnswer(card, qi) {
 
 function markTabDone(tab, done) {
   tab.classList.toggle('done', done);
+}
+
+// Show question `qi`'s tab/panel and remember it as active (mouse + keyboard).
+function activateTab(card, qi) {
+  if (qi < 0 || qi >= card._questions.length) return;
+  card._active = qi;
+  card.querySelectorAll('.ask-tab').forEach((t, i) => t.classList.toggle('active', i === qi));
+  card.querySelectorAll('.ask-panel').forEach((p, i) => p.classList.toggle('active', i === qi));
+}
+
+function activePanel(card) {
+  return card.querySelectorAll('.ask-panel')[card._active] || null;
+}
+
+// Move the keyboard highlight within the active question by `delta` (wraps).
+function moveHighlight(card, delta) {
+  const panel = activePanel(card);
+  if (!panel) return;
+  const opts = panel.querySelectorAll('.ask-opt');
+  if (!opts.length) return;
+  const qi = card._active;
+  const next = (card._hl[qi] + delta + opts.length) % opts.length;
+  card._hl[qi] = next;
+  opts.forEach((b, i) => b.classList.toggle('hl', i === next));
+  opts[next].scrollIntoView({ block: 'nearest' });
+}
+
+// Index of the first question with no answer yet, or -1 when all are answered.
+function firstUnanswered(card) {
+  for (let qi = 0; qi < card._questions.length; qi++) {
+    if (!hasAnswer(card, qi)) return qi;
+  }
+  return -1;
+}
+
+function askCardKeydown(card, e) {
+  if (card.classList.contains('answered')) return;
+  const inOther = document.activeElement
+    && document.activeElement.classList.contains('ask-other');
+  const err = card.querySelector('.ask-error');
+
+  if (e.key === 'Escape') {        // bail out, like the terminal
+    e.preventDefault();
+    chatStop();
+    return;
+  }
+  if (e.key === 'Enter') {
+    // In the "Other…" box, Enter submits the whole card (type-to-answer).
+    // On a highlighted option, Enter selects it, then advances or submits.
+    e.preventDefault();
+    if (!inOther) {
+      const q = card._questions[card._active];
+      const opts = activePanel(card).querySelectorAll('.ask-opt');
+      const hl = opts[card._hl[card._active]];
+      if (hl) hl.click();
+      if (q && q.multiSelect) return; // stay so more can be toggled
+    }
+    const next = firstUnanswered(card);
+    if (next === -1) submitAsk(card, err);
+    else activateTab(card, next);
+    return;
+  }
+  if (inOther) return; // let the text box handle arrows/typing itself
+  if (e.key === 'ArrowDown') { e.preventDefault(); moveHighlight(card, 1); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); moveHighlight(card, -1); }
+  else if (e.key === ' ') {        // Space toggles (handy for multi-select)
+    e.preventDefault();
+    const opts = activePanel(card).querySelectorAll('.ask-opt');
+    const hl = opts[card._hl[card._active]];
+    if (hl) hl.click();
+  } else if (e.key === 'ArrowRight') { e.preventDefault(); activateTab(card, card._active + 1); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); activateTab(card, card._active - 1); }
 }
 
 function toggleOpt(card, qi, panel, label, multi) {
@@ -1164,9 +1281,15 @@ function submitAsk(card, err) {
   lockAskCardEl(card, res.answers); // optimistic; server echoes ask_answered
 }
 
-// Lock a card by id (used when ask_answered arrives from history or live).
+// Lock a card by id (used when ask_answered arrives from history or live). Ids can
+// repeat when an API error/resume restarts the server's ask counter, so prefer the
+// last not-yet-answered card with this id — a first-match querySelector would mark
+// an already-answered duplicate and leave the real open card stuck.
 function lockAskCard(id, answers) {
-  const card = document.querySelector(`.msg.ask[data-ask-id="${CSS.escape(id)}"]`);
+  const cards = $('chat-log').querySelectorAll(`.msg.ask[data-ask-id="${CSS.escape(id)}"]`);
+  let card = null;
+  for (const c of cards) if (!c.classList.contains('answered')) card = c;
+  if (!card && cards.length) card = cards[cards.length - 1];
   if (card) lockAskCardEl(card, answers);
 }
 
@@ -1189,6 +1312,93 @@ function lockAskCardEl(card, answers) {
     done.textContent = '✓ Answered';
     footer.appendChild(done);
   }
+  updateComposerLock(); // the question is resolved — let the user type again
+}
+
+/* --- plan approval card (ExitPlanMode) --- */
+
+// Send a plan response as an ordinary user turn (the agent is idle after
+// presenting its plan, so approval is just the next message). Returns false if
+// the socket isn't open so the caller can leave the card actionable.
+function sendPlanResponse(text) {
+  if (!chatWs || chatWs.readyState !== WebSocket.OPEN) {
+    flash('Reconnecting — try again'); return false;
+  }
+  chatWs.send(JSON.stringify({ type: 'send', text }));
+  scrollChatBottom();
+  return true;
+}
+
+// Render the agent's plan with an Approve / Keep-planning control. Approval and
+// "keep planning" both just send a normal message; the card then locks. (On a
+// later reconnect the card re-renders unlocked — the follow-up user message in
+// the transcript makes the outcome clear.)
+function planCard(ev) {
+  const card = document.createElement('div');
+  card.className = 'msg plan';
+
+  const head = document.createElement('div');
+  head.className = 'plan-head';
+  head.textContent = 'Plan ready for approval';
+  card.appendChild(head);
+
+  const md = document.createElement('div');
+  md.className = 'md';
+  md.innerHTML = renderMarkdown(ev.text || '');
+  card.appendChild(md);
+
+  const note = document.createElement('textarea');
+  note.className = 'plan-note';
+  note.rows = 2;
+  note.placeholder = 'What to change about the plan…';
+  note.hidden = true;
+  card.appendChild(note);
+
+  const footer = document.createElement('div');
+  footer.className = 'plan-footer';
+
+  const approve = document.createElement('button');
+  approve.className = 'plan-approve';
+  approve.textContent = 'Approve & implement';
+
+  const keep = document.createElement('button');
+  keep.className = 'plan-keep';
+  keep.textContent = 'Keep planning';
+
+  function lock(label) {
+    approve.disabled = keep.disabled = note.disabled = true;
+    note.hidden = true;
+    footer.textContent = '';
+    const done = document.createElement('span');
+    done.className = 'plan-done';
+    done.textContent = label;
+    footer.appendChild(done);
+  }
+
+  approve.addEventListener('click', () => {
+    if (sendPlanResponse('Approved — implement the plan now. You may edit files.')) {
+      lock('✓ Approved — implementing');
+    }
+  });
+
+  keep.addEventListener('click', () => {
+    // First click reveals the note box; the second sends it.
+    if (note.hidden) {
+      note.hidden = false;
+      keep.textContent = 'Send notes';
+      note.focus();
+      return;
+    }
+    const txt = note.value.trim();
+    if (sendPlanResponse('Keep planning.' + (txt ? ' ' + txt : ''))) {
+      lock('✓ Sent to planner');
+    }
+  });
+
+  footer.appendChild(approve);
+  footer.appendChild(keep);
+  card.appendChild(footer);
+  return card;
 }
 
 function resultEl(ev) {
@@ -1217,14 +1427,24 @@ function renderChatEvent(ev, scroll) {
     if (ttsOn) speak(ev.text);
   } else if (ev.role === 'thinking') el = collapsible('thinking', 'Thinking', ev.text, true);
   else if (ev.role === 'tool_use') el = toolUseEl(ev);
-  else if (ev.role === 'ask') el = askCard(ev);
+  else if (ev.role === 'ask') { retireOpenAsks(); el = askCard(ev); }
   else if (ev.role === 'ask_answered') { lockAskCard(ev.id, ev.answers); return; }
+  else if (ev.role === 'plan') el = planCard(ev);
   else if (ev.role === 'tool_result') el = collapsible('tool-result', 'Tool result', ev.text, false);
   else if (ev.role === 'result') {
     el = resultEl(ev);
     if (typeof ev.cost === 'number') { chatTotalCost += ev.cost; updateCost(); }
   } else if (ev.role === 'error') el = simpleMsg('error', ev.text);
   if (el) log.appendChild(el);
+  if (ev.role === 'ask') focusAskCard(el);
+  // Reconcile the composer lock on every event (not just 'ask'): the agent stays
+  // busy for a whole turn without sending a 'status', so a lock set by an earlier
+  // ask must be cleared by the next event once no question is open — otherwise the
+  // composer stays stuck disabled until the turn ends. (A genuinely pending ask
+  // blocks the agent, so no other events arrive to unlock it prematurely.)
+  updateComposerLock();
+  if (ev.role === 'user') maybeClamp(el);  // collapse long pasted input
+  updateWorkingIndicator();   // keep the processing cursor below the newest event
   if (scroll) maybeScroll();
 }
 
@@ -1241,11 +1461,35 @@ function appendDelta(text) {
   }
   streamingEl._raw += text;
   streamingEl.querySelector('.md').innerHTML = renderMarkdown(streamingEl._raw);
+  updateWorkingIndicator();   // streaming text takes over → hide the cursor bubble
   maybeScroll();
 }
 
 function clearStreaming() {
   if (streamingEl) { streamingEl.remove(); streamingEl = null; }
+  updateWorkingIndicator();   // back to "processing" between text and tools
+}
+
+// A blinking-cursor bubble shown while the agent is processing (thinking or
+// running tools) but not yet streaming text — so an idle-looking chat is clearly
+// distinguished from "your turn to answer". Hidden while streaming, when idle,
+// and when an ask card is waiting on the user.
+function updateWorkingIndicator() {
+  const log = $('chat-log');
+  const show = chatBusy && !streamingEl && !pendingAskOpen();
+  let el = $('chat-working');
+  if (show) {
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'chat-working';
+      el.className = 'msg assistant working';
+      el.innerHTML = '<span class="cursor">▋</span>';
+    }
+    log.appendChild(el);   // keep it at the bottom (appendChild moves it)
+    maybeScroll();
+  } else if (el) {
+    el.remove();
+  }
 }
 
 /* --- scroll --- */
@@ -1267,8 +1511,60 @@ function maybeScroll() {
 /* --- status / cost / connection --- */
 
 function setChatBusy(busy) {
+  chatBusy = !!busy;
   $('chat-stop').hidden = !busy;
   $('chat').classList.toggle('busy', !!busy);
+  updateComposerLock();
+  updateWorkingIndicator();
+}
+
+// True while the agent is blocked on an unanswered ask card (so we must not let
+// the user send an unrelated message — it would queue behind the blocked tool
+// call and deadlock the session, exactly the bug this guards against).
+function pendingAskOpen() {
+  // Only the most recent ask card can be genuinely open: the agent blocks while
+  // waiting for an answer, so nothing renders after a live ask. An earlier
+  // unanswered card followed by newer content is stale (e.g. an API error/resume
+  // restarted the server's ask counter, orphaning the old card) and must not keep
+  // the composer locked.
+  const asks = $('chat-log').querySelectorAll('.msg.ask');
+  const last = asks[asks.length - 1];
+  return !!last && !last.classList.contains('answered');
+}
+
+// Lock the composer while a question is pending, mirroring the terminal where an
+// open prompt captures input. Unlocks the moment it's answered or interrupted.
+function updateComposerLock() {
+  const ta = $('chat-input');
+  if (_chatPlaceholder === null) _chatPlaceholder = ta.getAttribute('placeholder') || '';
+  const locked = chatBusy && pendingAskOpen();
+  ta.disabled = locked;
+  for (const id of ['chat-send', 'chat-attach', 'chat-mic']) $(id).disabled = locked;
+  ta.placeholder = locked ? 'Answer the question above to continue…' : _chatPlaceholder;
+  $('chat').classList.toggle('awaiting-answer', locked);
+}
+
+// Focus a freshly rendered, still-open ask card so keyboard nav works at once.
+function focusAskCard(card) {
+  if (card && !card.classList.contains('answered')) card.focus({ preventScroll: false });
+}
+
+// The agent stopped waiting (answered elsewhere, interrupted, or errored) while
+// a card is still open — retire any unanswered cards so the composer can't stay
+// stuck disabled and a stale card can't be "submitted" into the void.
+function retireOpenAsks() {
+  $('chat-log').querySelectorAll('.msg.ask:not(.answered)').forEach((card) => {
+    card.classList.add('answered', 'stale');
+    card.querySelectorAll('.ask-opt, .ask-other, .ask-submit').forEach((e) => { e.disabled = true; });
+    const footer = card.querySelector('.ask-footer');
+    if (footer) {
+      footer.textContent = '';
+      const s = document.createElement('span');
+      s.className = 'ask-done stale';
+      s.textContent = '⌀ No longer waiting for an answer';
+      footer.appendChild(s);
+    }
+  });
 }
 function updateCost() { $('chat-cost').textContent = '$' + chatTotalCost.toFixed(3); }
 function applyCostVisibility() { $('chat-cost').style.display = costVisible ? '' : 'none'; }
@@ -1286,6 +1582,12 @@ function handleChatMsg(m) {
     streamingEl = null;
     chatTotalCost = 0;
     for (const ev of m.events) renderChatEvent(ev, false);
+    // Seed ↑/↓ recall with this conversation's past user messages.
+    chatHistory = m.events
+      .filter((ev) => ev.role === 'user')
+      .map((ev) => (ev.text || '').trim())
+      .filter(Boolean);
+    histIndex = null; histDraft = '';
     updateCost();
     scrollChatBottom();
   } else if (m.type === 'delta') {
@@ -1294,6 +1596,9 @@ function handleChatMsg(m) {
     clearStreaming();
     renderChatEvent(m.event, true);
   } else if (m.type === 'status') {
+    // Agent idle while a card is still open ⇒ it was interrupted/abandoned;
+    // retire the card so the composer can't stay stuck disabled.
+    if (!m.busy && pendingAskOpen()) retireOpenAsks();
     setChatBusy(m.busy);
     if (m.model && m.model !== chatModel) { chatModel = m.model; $('chat-model').value = m.model; }
   }
@@ -1333,6 +1638,7 @@ function openChat(name) {
   $('chat-title').textContent = (s && s.cwd) || name;
   $('chat-title').title = name;
   $('chat-log').textContent = '';
+  chatHistory = []; histIndex = null; histDraft = '';  // per-session; history reseeds it
   chatTotalCost = 0; updateCost(); applyCostVisibility();
   clearAttachments();
   setChatBusy(false);
@@ -1356,17 +1662,146 @@ function autoGrow(ta) {
   ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
 }
 
+/* --- collapsed long-text pastes (terminal-style [Pasted text #N +L lines]) --- */
+
+const PASTE_LINE_MIN = 6;     // collapse a paste with at least this many lines…
+const PASTE_CHAR_MIN = 800;   // …or this many characters
+let chatPastes = [];          // { id, text }
+let pasteSeq = 0;
+const PASTE_RE = /\[Pasted text #(\d+) \+\d+ (?:lines|chars)\]/g;
+
+function pasteLabel(id, text) {
+  const lines = text.split('\n').length;
+  const unit = lines > 1 ? `+${lines} lines` : `+${text.length} chars`;
+  return `[Pasted text #${id} ${unit}]`;
+}
+
+// Replace each surviving marker with its stored text; a marker the user deleted
+// simply drops its paste. Run at send time.
+function expandPastes(text) {
+  return text.replace(PASTE_RE, (m, n) => {
+    const p = chatPastes.find((x) => String(x.id) === n);
+    return p ? p.text : m;
+  });
+}
+
+function clearPastes() { chatPastes = []; pasteSeq = 0; renderPastes(); }
+
+function insertAtCursor(ta, str) {
+  const s = ta.selectionStart ?? ta.value.length;
+  const e = ta.selectionEnd ?? s;
+  ta.value = ta.value.slice(0, s) + str + ta.value.slice(e);
+  const pos = s + str.length;
+  ta.setSelectionRange(pos, pos);
+  autoGrow(ta);
+}
+
+// A removable chip per pending paste (mirrors the image-attachment chips). The
+// inline [Pasted text #N …] marker is the source of truth for position; the chip
+// is just an easy remove affordance and a preview of the line/char count.
+function renderPastes() {
+  const box = $('chat-pastes');
+  if (!box) return;
+  box.textContent = '';
+  box.hidden = !chatPastes.length;
+  chatPastes.forEach((p) => {
+    const chip = document.createElement('div');
+    chip.className = 'paste-chip';
+    const lines = p.text.split('\n').length;
+    const label = document.createElement('span');
+    label.className = 'paste-chip-label';
+    label.textContent = `#${p.id} · ${lines > 1 ? lines + ' lines' : p.text.length + ' chars'}`;
+    label.title = p.text.slice(0, 4000);
+    chip.appendChild(label);
+    const rm = document.createElement('button');
+    rm.className = 'paste-rm'; rm.textContent = '×'; rm.title = 'Remove paste';
+    rm.addEventListener('click', () => removePaste(p.id));
+    chip.appendChild(rm);
+    box.appendChild(chip);
+  });
+}
+
+// Remove a paste by id: drop it and strip its marker from the composer.
+function removePaste(id) {
+  chatPastes = chatPastes.filter((p) => p.id !== id);
+  const ta = $('chat-input');
+  ta.value = ta.value.replace(
+    new RegExp(`\\[Pasted text #${id} \\+\\d+ (?:lines|chars)\\]`, 'g'), '');
+  autoGrow(ta);
+  renderPastes();
+}
+
+// Keep chips in sync when the user manually edits/deletes a marker in the textarea.
+function reconcilePastes() {
+  if (!chatPastes.length) return;
+  const present = new Set();
+  let m;
+  PASTE_RE.lastIndex = 0;
+  while ((m = PASTE_RE.exec($('chat-input').value)) !== null) present.add(m[1]);
+  const before = chatPastes.length;
+  chatPastes = chatPastes.filter((p) => present.has(String(p.id)));
+  if (chatPastes.length !== before) renderPastes();
+}
+
+/* --- composer input history (↑/↓ recall, shell-style) --- */
+
+// History recall only kicks in at the text edges, so ↑/↓ still move the caret
+// between lines of a multi-line draft. Collapsed selection only.
+function caretOnFirstLine(ta) {
+  return ta.selectionStart === ta.selectionEnd
+    && ta.value.lastIndexOf('\n', ta.selectionStart - 1) === -1;
+}
+function caretOnLastLine(ta) {
+  return ta.selectionStart === ta.selectionEnd
+    && ta.value.indexOf('\n', ta.selectionEnd) === -1;
+}
+
+function setComposer(ta, val) {
+  ta.value = val;
+  autoGrow(ta);
+  const end = ta.value.length;
+  ta.setSelectionRange(end, end);   // caret at end, like a shell recall
+  hideMentions();
+}
+
+// dir: -1 = older (↑), +1 = newer (↓). Returns true if it consumed the key.
+function chatHistoryNav(dir, ta) {
+  if (!chatHistory.length) return false;
+  if (dir < 0) {
+    if (histIndex === null) { histDraft = ta.value; histIndex = chatHistory.length - 1; }
+    else if (histIndex > 0) { histIndex--; }
+    else { return true; }                 // already at the oldest — just hold
+  } else {
+    if (histIndex === null) return false; // not navigating — let the caret move
+    if (histIndex < chatHistory.length - 1) { histIndex++; }
+    else { histIndex = null; setComposer(ta, histDraft); return true; }  // back to draft
+  }
+  setComposer(ta, chatHistory[histIndex]);
+  return true;
+}
+
+function pushChatHistory(text) {
+  text = (text || '').trim();
+  if (!text) return;
+  if (chatHistory[chatHistory.length - 1] !== text) chatHistory.push(text); // skip dup of last
+  if (chatHistory.length > 200) chatHistory.shift();
+  histIndex = null; histDraft = '';
+}
+
 function chatSend() {
   const ta = $('chat-input');
-  let text = ta.value.trim();
+  // A pending question owns the input; answer it (or Esc) before chatting.
+  if (chatBusy && pendingAskOpen()) { flash('Answer the question above first'); return; }
+  let text = expandPastes(ta.value).trim();
   if (!text && !chatAttachments.length) return;
   if (!chatWs || chatWs.readyState !== WebSocket.OPEN) { flash('Reconnecting — try again'); return; }
+  pushChatHistory(text);   // remember the message for ↑/↓ recall (before image refs)
   if (chatAttachments.length) {
     const refs = chatAttachments.map((a) => a.path).join('\n');
     text = (text ? text + '\n\n' : '') + 'Attached image(s):\n' + refs;
   }
   chatWs.send(JSON.stringify({ type: 'send', text }));
-  ta.value = ''; autoGrow(ta); hideMentions(); clearAttachments();
+  ta.value = ''; autoGrow(ta); hideMentions(); clearAttachments(); clearPastes();
   scrollChatBottom();
 }
 
@@ -1440,6 +1875,8 @@ const mentionActive = () => !$('chat-mentions').hidden;
 
 async function onChatInput() {
   autoGrow($('chat-input'));
+  histIndex = null;   // editing the live draft again — next ↑ starts from newest
+  reconcilePastes();  // a manually-deleted marker drops its chip
   const ta = $('chat-input');
   const upto = ta.value.slice(0, ta.selectionStart);
   const m = upto.match(/@([^\s@]*)$/);
@@ -1473,10 +1910,16 @@ function hideMentions() { $('chat-mentions').hidden = true; }
 function pickMention(file) {
   const ta = $('chat-input');
   const pos = ta.selectionStart;
-  ta.value = ta.value.slice(0, mentionStart) + '@' + file + ' ' + ta.value.slice(pos);
-  const np = mentionStart + file.length + 2;
+  // A directory (suffixed '/') keeps the picker open so you can drill into it;
+  // a file is inserted with a trailing space and the picker closes.
+  const isDir = file.endsWith('/');
+  const insert = '@' + file + (isDir ? '' : ' ');
+  ta.value = ta.value.slice(0, mentionStart) + insert + ta.value.slice(pos);
+  const np = mentionStart + insert.length;
   ta.setSelectionRange(np, np);
-  hideMentions(); autoGrow(ta); ta.focus();
+  autoGrow(ta); ta.focus();
+  if (isDir) onChatInput();   // re-query and list that folder's contents
+  else hideMentions();
 }
 
 /* --- voice in / out --- */
@@ -1486,14 +1929,32 @@ function setupRecognition() {
   if (!SR) { $('chat-mic').style.display = 'none'; return; }
   recog = new SR();
   recog.lang = 'en-US';
-  recog.interimResults = false;
+  recog.continuous = true;        // keep listening through pauses
+  recog.interimResults = true;    // show words live as they're recognised
   recog.onresult = (e) => {
-    const t = Array.from(e.results).map((r) => r[0].transcript).join(' ');
+    // Split the new results into finalised vs still-interim. Finalised text is
+    // committed to micBase (the stable transcript so far); interim is shown
+    // after it as a live preview and replaced as the engine refines it.
+    let interim = '', final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const tr = e.results[i][0].transcript;
+      if (e.results[i].isFinal) final += tr; else interim += tr;
+    }
+    if (final) micBase = (micBase + ' ' + final).trim();
     const ta = $('chat-input');
-    ta.value = (ta.value + ' ' + t).trim();
+    ta.value = (micBase + (interim ? ' ' + interim : '')).trim();
     autoGrow(ta);
   };
-  recog.onend = () => $('chat-mic').classList.remove('on');
+  recog.onerror = (e) => {
+    if (e && e.error && e.error !== 'no-speech' && e.error !== 'aborted') {
+      micOn = false; $('chat-mic').classList.remove('on');
+    }
+  };
+  recog.onend = () => {
+    // restart through the browser's silence-timeout until the user taps it off
+    if (micOn) { try { recog.start(); } catch { /* already restarting */ } }
+    else $('chat-mic').classList.remove('on');
+  };
 }
 function speak(text) {
   try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } catch { /* ignore */ }
@@ -1524,8 +1985,12 @@ $('chat-tts').addEventListener('click', () => {
 });
 $('chat-mic').addEventListener('click', () => {
   if (!recog) return;
-  if ($('chat-mic').classList.contains('on')) recog.stop();
-  else { try { recog.start(); $('chat-mic').classList.add('on'); } catch { /* ignore */ } }
+  if (micOn) { micOn = false; recog.stop(); $('chat-mic').classList.remove('on'); }
+  else {
+    micOn = true; micBase = $('chat-input').value.trim(); // dictate after existing text
+    $('chat-mic').classList.add('on');
+    try { recog.start(); } catch { /* ignore */ }
+  }
 });
 $('chat-input').addEventListener('input', onChatInput);
 $('chat-input').addEventListener('keydown', (e) => {
@@ -1534,6 +1999,14 @@ $('chat-input').addEventListener('keydown', (e) => {
     if (e.key === 'ArrowUp') { e.preventDefault(); mentionIndex = (mentionIndex - 1 + mentionItems.length) % mentionItems.length; renderMentionSel(); return; }
     if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickMention(mentionItems[mentionIndex]); return; }
     if (e.key === 'Escape') { e.preventDefault(); hideMentions(); return; }
+  }
+  const ta = e.currentTarget;
+  // ↑/↓ recall previous submissions — only at the text edges, so they still move
+  // the caret within a multi-line draft.
+  if (e.key === 'ArrowUp' && caretOnFirstLine(ta)) {
+    if (chatHistoryNav(-1, ta)) { e.preventDefault(); return; }
+  } else if (e.key === 'ArrowDown' && caretOnLastLine(ta)) {
+    if (chatHistoryNav(1, ta)) { e.preventDefault(); return; }
   }
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatSend(); }
   else if (e.key === 'Escape') { e.preventDefault(); chatStop(); }
@@ -1544,7 +2017,8 @@ $('chat-file').addEventListener('change', (e) => {
   e.target.value = '';
 });
 $('chat-input').addEventListener('paste', (e) => {
-  const items = (e.clipboardData && e.clipboardData.items) || [];
+  const dt = e.clipboardData;
+  const items = (dt && dt.items) || [];
   let had = false;
   for (const it of items) {
     if (it.kind === 'file' && it.type.startsWith('image/')) {
@@ -1552,7 +2026,19 @@ $('chat-input').addEventListener('paste', (e) => {
       if (blob) { had = true; addAttachment(blob); }
     }
   }
-  if (had) e.preventDefault();  // don't also dump binary into the textarea
+  if (had) { e.preventDefault(); return; }  // image paste: don't dump binary
+  // Long text → collapse into an inline [Pasted text #N +L lines] marker (like the
+  // terminal UI) instead of flooding the composer; expanded back to the real text
+  // on send. Select + delete the marker to drop the paste.
+  const text = dt ? dt.getData('text') : '';
+  if (!text) return;
+  if (text.split('\n').length >= PASTE_LINE_MIN || text.length >= PASTE_CHAR_MIN) {
+    e.preventDefault();
+    const id = ++pasteSeq;
+    chatPastes.push({ id, text });
+    insertAtCursor($('chat-input'), pasteLabel(id, text));
+    renderPastes();
+  }
 });
 (() => {
   const chat = $('chat');
@@ -1699,16 +2185,29 @@ function setSidebar(collapsed) {
   document.body.classList.toggle('collapsed', collapsed);
   localStorage.setItem('agentpeek-sidebar', collapsed ? 'collapsed' : 'open');
 }
+// On touch screens the sidebar and the attached session share one narrow
+// column, so activating a session collapses the sidebar to hand it the full
+// width (the » button brings it back). No-op on desktop / wide pointers.
+function collapseSidebarOnMobile() {
+  if (window.matchMedia('(pointer: coarse)').matches) setSidebar(true);
+}
 $('collapse-btn').addEventListener('click', () => setSidebar(true));
 $('expand-btn').addEventListener('click', () => setSidebar(false));
-if (localStorage.getItem('agentpeek-sidebar') === 'collapsed') setSidebar(true);
+// On load no session is attached yet. On touch screens the sidebar only
+// collapses to make room for an open session, so with nothing attached we must
+// start expanded — otherwise there's no way to pick one. Desktop keeps the
+// remembered collapsed state (there it's a deliberate space-saving choice).
+if (localStorage.getItem('agentpeek-sidebar') === 'collapsed'
+    && !window.matchMedia('(pointer: coarse)').matches) {
+  setSidebar(true);
+}
 
 $('theme-toggle').addEventListener('click', () => {
   const light = document.documentElement.classList.toggle('light');
   localStorage.setItem('agentpeek-theme', light ? 'light' : 'dark');
 });
 
-$('create-btn').addEventListener('click', openCreateDialog);
+$('create-btn').addEventListener('click', () => openCreateDialog());
 $('add-folder-btn').addEventListener('click', () => addFolder(null));
 
 $('folder-view-btn').classList.toggle('active', groupByFolder);
@@ -1729,11 +2228,10 @@ $('c-name').addEventListener('input', () => clearFieldError($('c-name')));
 $('c-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); submitCreate(); }
 });
-$('c-mode').querySelectorAll('.chip').forEach((b) => {
-  b.addEventListener('click', () => {
-    $('c-mode').querySelectorAll('.chip').forEach((c) => c.classList.remove('selected'));
-    b.classList.add('selected');
-    cstate.mode = b.dataset.mode;
+document.querySelectorAll('input[name="c-mode"]').forEach((r) => {
+  r.addEventListener('change', () => {
+    if (!r.checked) return;
+    cstate.mode = r.value;
     updateNotifyVisibility();
   });
 });
@@ -1825,6 +2323,62 @@ function setupKeybar() {
   cap.addEventListener('blur', () => setCtrlArmed(false));
 }
 setupKeybar();
+
+/* ---------- talk button (voice → terminal) ---------- */
+// Mobile-only: the keybar (and so this button) is only shown on touch screens.
+// Records a phrase with the Web Speech API and types the transcript verbatim
+// into the shell session via api.paste (send-keys -l), so it lands in Claude's
+// input box. We don't auto-press Enter — the user reviews the text and taps the
+// "enter" key to send, since recognition isn't always perfect.
+
+let talkRecog = null;
+let talkOn = false;   // user intends to keep recording (survives silence stops)
+
+function setupTalk() {
+  const btn = $('kb-talk');
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // No speech support (or insecure context) → hide the button rather than
+  // offer something that silently fails.
+  if (!SR) { btn.style.display = 'none'; return; }
+  talkRecog = new SR();
+  talkRecog.lang = 'en-US';
+  talkRecog.continuous = true;       // keep listening through pauses
+  talkRecog.interimResults = false;
+  talkRecog.onresult = async (e) => {
+    // continuous mode appends to e.results — paste only the newly finalized
+    // segments (from resultIndex) so we don't re-send earlier phrases.
+    let text = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) text += e.results[i][0].transcript;
+    }
+    text = text.trim();
+    if (!text || !shellActive()) return;
+    try { await api.paste(active, text + ' '); } catch (err) { flash(err.message); }
+  };
+  talkRecog.onerror = (e) => {
+    // A real error (e.g. permission denied) stops for good; 'no-speech' during a
+    // pause is normal — let onend restart it.
+    if (e && e.error && e.error !== 'no-speech' && e.error !== 'aborted') {
+      talkOn = false; btn.classList.remove('on');
+      flash(`Voice input: ${e.error}`);
+    }
+  };
+  talkRecog.onend = () => {
+    // Browsers end the session on silence even with continuous=true; restart
+    // until the user taps the button off, so a small pause won't stop dictation.
+    if (talkOn) { try { talkRecog.start(); } catch { /* already restarting */ } }
+    else btn.classList.remove('on');
+  };
+
+  btn.addEventListener('click', () => {
+    if (!shellActive()) return;
+    if (talkOn) { talkOn = false; talkRecog.stop(); btn.classList.remove('on'); return; }
+    talkOn = true; btn.classList.add('on');
+    try { talkRecog.start(); }
+    catch { /* start() throws if already running — ignore */ }
+  });
+}
+setupTalk();
 
 setInterval(refresh, 3000);
 window.addEventListener('focus', refresh);
