@@ -29,6 +29,29 @@ services:
       # instead of an API key, replace this with:  - ~/.claude:/root/.claude
       - agentpeek-claude:/root/.claude
 
+  # Companion viewer for the files the agent produces (md/html/office/code).
+  # Optional — remove this service if you don't want it. Its own published image
+  # (built from github.com/thrinz/filepeek), serving the SAME projects tree.
+  filepeek:
+    image: ghcr.io/thrinz/filepeek:latest
+    restart: unless-stopped
+    # Same posture as agentpeek: localhost-only; expose over Tailscale, e.g.
+    #   tailscale serve --bg --https=9444 http://127.0.0.1:8765
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      FILEPEEK_ROOT: /root/projects
+      # Optional login password (hashed). Generate one with:
+      #   docker run --rm ghcr.io/thrinz/filepeek:latest python app.py hash-password
+      # FILEPEEK_PASSWORD_HASH: "pbkdf2_sha256$..."
+    volumes:
+      # The same projects tree agentpeek edits — browse the output here. Add ':ro'
+      # if you want filepeek to be view-only (disables its file edit/upload tools).
+      - ${PROJECTS_DIR:-./projects}:/root/projects
+      # filepeek state: permlinks, bookmarks, auth.json, backup config.
+      - filepeek-state:/root/.config/filepeek
+
 volumes:
   agentpeek-config:
   agentpeek-claude:
+  filepeek-state:

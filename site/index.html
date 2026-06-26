@@ -297,7 +297,10 @@ PROJECTS_DIR=~/projects ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
      run it on Windows natively. <a href="https://github.com/thrinz/agentpeek/blob/main/docker-compose.yml"><code>docker-compose.yml</code></a>
      mounts your <code>projects</code> tree and keeps app state (<code>~/.config/agentpeek</code>) and Claude
      auth (<code>~/.claude</code>) in named volumes. It binds <code>127.0.0.1</code> on purpose — reach it
-     over your tailnet, never the open internet.</p>
+     over your tailnet, never the open internet. The compose file also runs
+     <a href="https://github.com/thrinz/filepeek">filepeek</a> as a companion container (its own
+     image, on <code>:8765</code>) so you can browse the files the agent produces — remove that service
+     if you don't want it.</p>
 
   <h2>Frequently asked questions</h2>
   <details><summary>Which AI agents does it run?</summary>
