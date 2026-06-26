@@ -75,8 +75,13 @@ echo "    ttyd: $TTYD ($("$TTYD" --version))"
 
 echo "==> 2/6 Claude Code"
 # Needed for UI (chat) mode and the default 'claude' terminal launcher. The
-# native installer supports macOS (standalone binary to ~/.local/bin).
-if ! command -v claude >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/claude" ]]; then
+# native installer supports macOS (standalone binary to ~/.local/bin). Skip it
+# entirely when claude is already installed (on PATH or at ~/.local/bin) — don't
+# re-download or touch an existing install (it may be a Homebrew/npm one).
+if command -v claude >/dev/null 2>&1 || [[ -x "$HOME/.local/bin/claude" ]]; then
+  echo "    claude already installed — skipping ($(command -v claude || echo "$HOME/.local/bin/claude"))"
+else
+  echo "    installing Claude Code…"
   curl -fsSL https://claude.ai/install.sh | bash
 fi
 hash -r 2>/dev/null || true
