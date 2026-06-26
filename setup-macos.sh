@@ -121,6 +121,24 @@ if ! grep -qF "$SOURCE_LINE" "$HOME/.tmux.conf"; then
 fi
 tmux source-file "$REPO/conf/agentpeek.tmux.conf" 2>/dev/null || true
 
+# === projects folder ========================================================
+# The agent's working tree — the directory agentpeek's create dialog browses.
+# Same policy as the password below: AGENTPEEK_PROJECTS_DIR=... sets it
+# explicitly, a TTY prompts (Enter accepts the default), otherwise it defaults to
+# ~/projects. Written to the env file (loaded by bin/agentpeek-serve) BEFORE the
+# agents start, so the app picks it up on first boot.
+default_projects="$HOME/projects"
+projects_dir="${AGENTPEEK_PROJECTS_DIR:-}"
+if [[ -z "$projects_dir" && -t 0 ]]; then
+  read -rep $'\nProjects folder for agentpeek to manage? ['"$default_projects"'] ' projects_dir
+fi
+projects_dir="${projects_dir:-$default_projects}"
+projects_dir="${projects_dir/#\~/$HOME}"          # expand a leading ~
+mkdir -p "$projects_dir"
+projects_dir="$(cd "$projects_dir" && pwd -P)"     # canonical absolute path
+set_env_kv AGENTPEEK_PROJECTS_DIR "$projects_dir"
+echo "    projects folder: $projects_dir"
+
 echo "==> 5/6 launchd user agents"
 mkdir -p "$LAUNCH_DIR" "$LOG_DIR"
 # Bake an absolute PATH into the plists: ~/.local/bin (claude/cds), both Homebrew

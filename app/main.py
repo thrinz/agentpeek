@@ -41,9 +41,13 @@ TTYD_HTTP = f"http://127.0.0.1:{TTYD_PORT}"
 TTYD_WS = f"ws://127.0.0.1:{TTYD_PORT}"
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
-# Root of the working-directory picker in the create dialog. Created on startup
-# so a fresh install can always browse it (and create folders under it).
-DIRS_ROOT = Path.home() / "projects"
+# Root of the working-directory picker in the create dialog. Defaults to
+# ~/projects; override with AGENTPEEK_PROJECTS_DIR (setup writes it to the env
+# file). Created on startup so a fresh install can always browse it (and create
+# folders under it).
+DIRS_ROOT = Path(
+    os.environ.get("AGENTPEEK_PROJECTS_DIR") or (Path.home() / "projects")
+).expanduser().resolve()
 DIRS_ROOT.mkdir(parents=True, exist_ok=True)
 SKIP_DIRS = {"node_modules", "__pycache__"}
 # Working-directory folder names: a single path segment, conservative charset.
