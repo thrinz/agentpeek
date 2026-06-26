@@ -143,11 +143,11 @@ class AgentRunner:
         self.session_id = session_id
         self.model = model
         self.client = None
-        self.queue: asyncio.Queue = asyncio.Queue()
         self.transcript: list = []
         self.clients: set = set()
         self.busy = False
-        self.task = None
+        self.task = None             # long-lived receive loop (terminal-style)
+        self._start_lock = asyncio.Lock()
         self.last_active = time.time()
         # In-flight ask_user calls: id -> (Future, questions). The future is
         # resolved by the websocket when the browser submits answers.
@@ -156,12 +156,11 @@ class AgentRunner:
         # tool_use ids for ask_user calls, so we can hide the raw tool_use /
         # tool_result events (the ask / ask_answered cards stand in for them).
         self._ask_tool_use_ids: set = set()
+        # tool_use ids for ExitPlanMode calls — the interactive plan card stands
+        # in for the raw tool_use / tool_result, same as the ask cards.
+        self._plan_tool_use_ids: set = set()
 
     # --- lifecycle -------------------------------------------------------
-
-    def ensure_task(self):
-        if self.task is None or self.task.done():
-            self.task = asyncio.create_task(self._run())
 
     async def _ensure_client(self):
         if self.client is not None:
@@ -186,46 +185,62 @@ class AgentRunner:
         self.client = ClaudeSDKClient(options=opts)
         await self.client.connect()
 
-    async def _run(self):
-        try:
-            await self._ensure_client()
-        except CLINotFoundError:
-            await self._emit({"role": "error", "text":
-                "Claude Code (the 'claude' CLI) isn't installed on the host, so UI "
-                "mode can't start. Install it (see the Claude Code docs) and retry."})
-            await self._status()
-            return
-        except Exception as e:  # connection / auth failure
-            # The chip can read "connected" just because a credentials file exists,
-            # yet the real `claude` start can still fail (expired token, not logged
-            # in, root without IS_SANDBOX). Surface the actual reason + how to fix.
-            stderr = (getattr(e, "stderr", "") or "").strip()
-            exit_code = getattr(e, "exit_code", None)
-            msg = ("Couldn't start Claude — you may need to sign in. Open the "
-                   "Claude connection (the chip at the bottom of the sidebar) and "
-                   "sign in, or run 'claude' once in a terminal to log in.")
-            details = "; ".join(p for p in [
-                f"claude exited {exit_code}" if exit_code is not None else "",
-                stderr,
-            ] if p)
-            if details:
-                msg += f"\n\nDetails: {details}"
-            await self._emit({"role": "error", "text": msg})
-            await self._status()
-            return
-        while True:
-            prompt = await self.queue.get()
-            if prompt is None:  # shutdown sentinel
-                return
-            self.busy = True
-            await self._status()
+    async def _ensure_started(self) -> bool:
+        """Connect the client (once) and start the long-lived receive loop.
+        Returns False (and emits an error event) if Claude can't be started."""
+        if self.client is not None and self.task and not self.task.done():
+            return True
+        async with self._start_lock:
+            if self.client is not None and self.task and not self.task.done():
+                return True
             try:
-                await self.client.query(prompt)
-                async for msg in self.client.receive_response():
-                    await self._handle(msg)
-            except Exception as e:
-                await self._emit({"role": "error", "text": str(e)})
+                await self._ensure_client()
+            except CLINotFoundError:
+                await self._emit({"role": "error", "text":
+                    "Claude Code (the 'claude' CLI) isn't installed on the host, so UI "
+                    "mode can't start. Install it (see the Claude Code docs) and retry."})
+                await self._status()
+                return False
+            except Exception as e:  # connection / auth failure
+                # The chip can read "connected" just because a credentials file exists,
+                # yet the real `claude` start can still fail (expired token, not logged
+                # in, root without IS_SANDBOX). Surface the actual reason + how to fix.
+                stderr = (getattr(e, "stderr", "") or "").strip()
+                exit_code = getattr(e, "exit_code", None)
+                msg = ("Couldn't start Claude — you may need to sign in. Open the "
+                       "Claude connection (the chip at the bottom of the sidebar) and "
+                       "sign in, or run 'claude' once in a terminal to log in.")
+                details = "; ".join(p for p in [
+                    f"claude exited {exit_code}" if exit_code is not None else "",
+                    stderr,
+                ] if p)
+                if details:
+                    msg += f"\n\nDetails: {details}"
+                await self._emit({"role": "error", "text": msg})
+                await self._status()
+                return False
+            self.task = asyncio.create_task(self._recv_loop())
+            return True
+
+    async def _recv_loop(self):
+        """One continuous stream of messages from Claude, like the terminal.
+
+        User prompts are pushed onto the same SDK session via query() whenever
+        they arrive (see enqueue), so a message sent mid-turn is read at the
+        next action boundary and steers the running turn rather than starting a
+        separate one. A turn ends at its ResultMessage, which flips busy off."""
+        try:
+            async for msg in self.client.receive_messages():
+                await self._handle(msg)
+                if isinstance(msg, ResultMessage):
+                    self.busy = False
+                    await self._status()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # transport died — drop the client so we reconnect
+            await self._emit({"role": "error", "text": str(e)})
             self.busy = False
+            self.client = None
             await self._status()
 
     async def _handle(self, msg):
@@ -253,12 +268,24 @@ class AgentRunner:
                     if b.name == ASK_QUALIFIED:
                         self._ask_tool_use_ids.add(b.id)
                         continue
+                    # ExitPlanMode → an interactive plan card with an Approve
+                    # button, not a raw tool-use dump. Approval is just the next
+                    # user turn (the agent is idle after presenting the plan).
+                    if b.name == "ExitPlanMode":
+                        self._plan_tool_use_ids.add(b.id)
+                        plan = (b.input or {}).get("plan", "") if isinstance(b.input, dict) else ""
+                        await self._emit({"role": "plan", "text": plan})
+                        continue
                     await self._emit({"role": "tool_use", "name": b.name, "input": b.input})
         elif isinstance(msg, UserMessage):
             for b in getattr(msg, "content", None) or []:
                 if isinstance(b, ToolResultBlock):
-                    if getattr(b, "tool_use_id", None) in self._ask_tool_use_ids:
-                        self._ask_tool_use_ids.discard(b.tool_use_id)
+                    tuid = getattr(b, "tool_use_id", None)
+                    if tuid in self._ask_tool_use_ids:
+                        self._ask_tool_use_ids.discard(tuid)
+                        continue
+                    if tuid in self._plan_tool_use_ids:
+                        self._plan_tool_use_ids.discard(tuid)
                         continue
                     await self._emit({"role": "tool_result", "text": _tool_result_text(b)})
         elif isinstance(msg, ResultMessage):
@@ -324,6 +351,21 @@ class AgentRunner:
                 fut.cancel()
         self.pending_asks.clear()
 
+    def restore_ask_seq(self):
+        """Rebuild the ask counter from the loaded transcript so a recreated agent
+        (idle release / server restart) never reuses an id that's already an ask
+        card in a browser's history. Duplicate ids otherwise confuse answer routing
+        and can leave the composer stuck disabled."""
+        hi = 0
+        for ev in self.transcript:
+            if ev.get("role") == "ask":
+                try:
+                    n = int(str(ev.get("id", "")).rsplit(":", 1)[-1])
+                except (ValueError, TypeError):
+                    continue
+                hi = max(hi, n)
+        self._ask_seq = hi
+
     # --- io --------------------------------------------------------------
 
     async def _emit(self, event):
@@ -344,18 +386,29 @@ class AgentRunner:
 
     async def _status(self):
         await self._broadcast({
-            "type": "status", "busy": self.busy,
-            "queued": self.queue.qsize(), "model": self.model,
+            "type": "status", "busy": self.busy, "model": self.model,
         })
 
     # --- public ----------------------------------------------------------
 
     async def enqueue(self, text):
         self.last_active = time.time()
-        self.ensure_task()
         await self._emit({"role": "user", "text": text})
-        await self.queue.put(text)
+        if not await self._ensure_started():
+            return
+        # Push into the live SDK session. When idle this starts a turn; when the
+        # agent is mid-turn the CLI reads it at the next action boundary and
+        # steers that turn — the terminal's "type without stopping" behaviour,
+        # instead of running the message as a separate, context-less turn.
+        self.busy = True
         await self._status()
+        try:
+            await self.client.query(text)
+        except Exception as e:
+            await self._emit({"role": "error", "text": str(e)})
+            self.busy = False
+            self.client = None
+            await self._status()
 
     async def interrupt(self):
         self._cancel_pending_asks()
@@ -383,8 +436,7 @@ class AgentRunner:
         self.clients.add(ws)
         await ws.send_json({"type": "history", "events": self.transcript})
         await ws.send_json({
-            "type": "status", "busy": self.busy,
-            "queued": self.queue.qsize(), "model": self.model,
+            "type": "status", "busy": self.busy, "model": self.model,
         })
 
     def remove_ws(self, ws):
@@ -407,14 +459,13 @@ class AgentRunner:
 
     async def shutdown(self):
         self._cancel_pending_asks()
-        await self.queue.put(None)
+        if self.task:
+            self.task.cancel()
         if self.client:
             try:
                 await self.client.disconnect()
             except Exception:
                 pass
-        if self.task:
-            self.task.cancel()
 
 
 class UIManager:
@@ -497,6 +548,7 @@ class UIManager:
             r = AgentRunner(self, name, meta["cwd"], meta.get("session_id"),
                             meta.get("group", "General"), meta.get("model", DEFAULT_MODEL))
             r.transcript = self._load_transcript(name)
+            r.restore_ask_seq()
             self.runners[name] = r
         return r
 

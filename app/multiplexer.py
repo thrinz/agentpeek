@@ -6,8 +6,16 @@ Targets use tmux's `=name` prefix for exact matching, since a bare `-t name`
 does prefix matching.
 """
 
+import os
 import re
 import subprocess
+
+# Dedicated tmux socket (tmux -L <socket>). Set to "agentpeek" by the systemd
+# unit so the server lives in its own cgroup (agentpeek-tmux.service) and isn't
+# killed when the app restarts. Empty (the default) keeps tmux's default socket,
+# so other consumers of this module are unaffected.
+TMUX_SOCKET = os.environ.get("AGENTPEEK_TMUX_SOCKET", "")
+_SOCKET_ARGS = ["-L", TMUX_SOCKET] if TMUX_SOCKET else []
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # Session names additionally allow spaces. Still no '/' or '.', so they stay
@@ -52,7 +60,7 @@ def validate_name(name: str) -> None:
 
 
 def _tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    proc = subprocess.run(["tmux", *args], capture_output=True, text=True)
+    proc = subprocess.run(["tmux", *_SOCKET_ARGS, *args], capture_output=True, text=True)
     if check and proc.returncode != 0:
         raise MuxError(proc.stderr.strip() or f"tmux {' '.join(args)} failed")
     return proc
@@ -123,7 +131,8 @@ def list_sessions() -> list[dict]:
                 # only while the foreground program is actually writing, so a
                 # stalled value means it finished and is idle at its prompt.
                 "activity": int(activity) if activity else 0,
-                "attach_command": f"tmux attach -t {name}",
+                "attach_command":
+                    f"tmux {' '.join(_SOCKET_ARGS)} attach -t {name}".replace("  ", " "),
                 # CLI-created sessions have no group option -> General bucket
                 "group": group or "General",
                 # Directory the session was created in; fall back to the active
@@ -202,12 +211,56 @@ def send_keys(name: str, keys: list[str]) -> None:
         _tmux("send-keys", "-t", f"={name}:", *keys)
 
 
+def _mouse_tracking(name: str) -> bool:
+    """True when the foreground program is capturing the mouse (e.g. Claude
+    Code's full-screen TUI). Such apps render on the alternate screen and keep
+    their own scrollback, so tmux's copy-mode buffer is empty — they must be
+    scrolled by feeding them mouse-wheel events instead."""
+    out = _tmux("display-message", "-p", "-t", f"={name}:",
+                "#{mouse_any_flag}", check=False)
+    return out.returncode == 0 and out.stdout.strip() == "1"
+
+
+# How many wheel "clicks" one scroll-button tap sends to a mouse-tracking app —
+# tuned to feel like the half-page jump copy-mode gives for plain shells.
+_WHEEL_STEPS = 3
+# A "jump to the latest" tap sends a big burst of wheel-down clicks; the app
+# clamps at its last line, so this snaps the view to the bottom.
+_WHEEL_END_STEPS = 100
+
+
+def _wheel(name: str, button: int, count: int) -> None:
+    """Send `count` SGR mouse-wheel events to the app in one keystroke.
+
+    SGR encoding: button 64 = wheel-up, 65 = wheel-down, reported at col/row 1.
+    Repeating the sequence in a single send-keys avoids spawning tmux per click.
+    """
+    _tmux("send-keys", "-t", f"={name}:", "-l", f"\x1b[<{button};1;1M" * count)
+
+
 def scroll(name: str, direction: str) -> None:
-    """Scroll the session's view up/down by half a page using copy-mode."""
+    """Scroll the session's view up, down, or all the way to the bottom.
+
+    Plain shells keep their output in tmux's scrollback, so we drive copy-mode.
+    Full-screen apps that track the mouse (Claude Code) scroll their own view
+    via wheel events and leave tmux's scrollback empty, so copy-mode would do
+    nothing there — for those we send the SGR wheel events the app understands.
+    """
     if not has(name):
         raise NoSuchSession(f"No session named '{name}'.")
-    if direction not in ("up", "down"):
+    if direction not in ("up", "down", "bottom"):
         raise InvalidName(f"Bad scroll direction: {direction!r}")
+    if _mouse_tracking(name):
+        if direction == "bottom":
+            _wheel(name, 65, _WHEEL_END_STEPS)
+        else:
+            _wheel(name, 64 if direction == "up" else 65, _WHEEL_STEPS)
+        return
+    if direction == "bottom":
+        # Leave copy-mode and snap back to the live view (the bottom). A no-op
+        # (harmless error, hence check=False) when not currently in copy-mode.
+        _tmux("send-keys", "-t", f"={name}:", "-X", "cancel", check=False)
+        return
     # Entering copy-mode is harmless if already in it; scrolling to the
     # bottom drops back out to the live view automatically.
     _tmux("copy-mode", "-t", f"={name}:", check=False)

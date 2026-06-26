@@ -264,12 +264,58 @@ _FILE_SKIP_DIRS = {"node_modules", "__pycache__", ".git", ".venv", "dist", ".nex
 
 @app.get("/api/ui/files")
 def ui_files(session: str, q: str = ""):
-    """Files under a UI session's working directory, for @-mention autocomplete."""
+    """Autocomplete for @-mentions in a UI session.
+
+    A plain query fuzzy-matches files recursively under the session's working
+    directory. A query containing '/' is treated as path navigation: it lists
+    the entries of that directory (relative to the cwd, '..' allowed), with
+    sub-directories suffixed '/' so the user can drill into parent / sibling
+    folders. Navigation is bounded to the projects root when the cwd lives under
+    it, so @ can't escape into the whole filesystem."""
     meta = ui_agent.manager.registry.get(session)
     if not meta:
         raise HTTPException(404, "No such UI session.")
-    base = Path(meta["cwd"])
-    needle = (q or "").lower()
+    base = Path(meta["cwd"]).resolve()
+    q = q or ""
+
+    if "/" in q:
+        # path navigation: list one directory (allowing '..'), bounded to `top`
+        top = DIRS_ROOT.resolve()
+        if not base.is_relative_to(top):
+            top = base  # CLI session outside projects/ → don't allow climbing out
+        dirpart, _, needle = q.rpartition("/")
+        try:
+            target = (base / dirpart).resolve()
+        except (OSError, ValueError):
+            return {"files": []}
+        if not target.is_dir() or not (target == top or target.is_relative_to(top)):
+            return {"files": []}
+        needle = needle.lower()
+        out = []
+        try:
+            entries = sorted(os.scandir(target), key=lambda e: e.name)
+        except OSError:
+            return {"files": []}
+        for e in entries:
+            if e.name.startswith(".") or (needle and needle not in e.name.lower()):
+                continue
+            try:
+                isdir = e.is_dir()
+            except OSError:
+                isdir = False
+            if isdir and e.name in _FILE_SKIP_DIRS:
+                continue
+            if Path(e.path).resolve() == base:   # the cwd itself, listing its parent
+                continue
+            # keep the navigation prefix the user typed (so '../../proj/' stays
+            # readable) rather than collapsing to a canonical relpath
+            disp = os.path.normpath(os.path.join(dirpart, e.name)) if dirpart else e.name
+            out.append(disp + "/" if isdir else disp)
+            if len(out) >= 40:
+                break
+        return {"files": out}
+
+    needle = q.lower()
     out = []
     for root, dirs, files in os.walk(base):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _FILE_SKIP_DIRS]

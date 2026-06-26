@@ -4,6 +4,14 @@
 # browser's native scrollback covers output from before this attach (FR-7).
 set -euo pipefail
 
+# Target the dedicated tmux socket when AGENTPEEK_TMUX_SOCKET is set (the
+# systemd unit sets it to "agentpeek"); otherwise use tmux's default socket so
+# other callers are unaffected. Must match app/multiplexer.py's TMUX_SOCKET.
+socket_args=()
+if [[ -n "${AGENTPEEK_TMUX_SOCKET:-}" ]]; then
+  socket_args=(-L "$AGENTPEEK_TMUX_SOCKET")
+fi
+
 name="${1:-}"
 if [[ -z "$name" ]]; then
   echo "agentpeek: no session name given (expected ?arg=<name>)" >&2
@@ -13,7 +21,7 @@ if [[ ! "$name" =~ ^[A-Za-z0-9_-]+$ ]]; then
   echo "agentpeek: invalid session name" >&2
   exit 1
 fi
-if ! tmux has-session -t "=$name" 2>/dev/null; then
+if ! tmux "${socket_args[@]}" has-session -t "=$name" 2>/dev/null; then
   echo "agentpeek: session '$name' does not exist" >&2
   exit 1
 fi
@@ -21,7 +29,7 @@ fi
 # History above the visible screen (-E -1); attach redraws the screen itself.
 # Trailing ':' makes tmux parse the exact-match '=' as a session:window target
 # (a bare '=name' is rejected for pane-target commands).
-tmux capture-pane -p -e -S - -E -1 -t "=$name:" 2>/dev/null || true
+tmux "${socket_args[@]}" capture-pane -p -e -S - -E -1 -t "=$name:" 2>/dev/null || true
 
 # Push the replayed lines fully into scrollback: attach clears the visible
 # screen, which would otherwise eat the last screenful of replayed history.
@@ -30,4 +38,4 @@ if [[ "${rows:-0}" -gt 0 ]]; then
   printf '\n%.0s' $(seq 1 "$rows")
 fi
 
-exec tmux attach-session -t "=$name"
+exec tmux "${socket_args[@]}" attach-session -t "=$name"
