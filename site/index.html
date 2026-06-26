@@ -29,7 +29,7 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "agentpeek",
-  "operatingSystem": "Linux, Windows (WSL2)",
+  "operatingSystem": "Linux, macOS, Windows (WSL2), Docker",
   "applicationCategory": "DeveloperApplication",
   "description": "A self-hosted browser control panel for Claude Code: persistent sessions you drive as a terminal or a streaming chat (Claude Agent SDK), with Markdown/table rendering, inline tool activity, @-mention, image paste, voice, and a model picker. Reachable from any browser over a Tailscale tailnet; sessions keep working when you disconnect.",
   "url": "https://agentpeek.dev/",
@@ -66,8 +66,8 @@
     },
     {
       "@type": "Question",
-      "name": "Does agentpeek work on WSL2?",
-      "acceptedAnswer": { "@type": "Answer", "text": "That's the home turf. Run it inside WSL2 and open it from your Windows browser; it auto-starts on boot via systemd user services and is reached over Tailscale." }
+      "name": "Which platforms does agentpeek run on?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Linux and WSL2 via setup.sh (systemd user services), macOS via setup-macos.sh (Homebrew + launchd agents), and anywhere via the prebuilt multi-arch Docker image — which is also the only way to run it on Windows natively. On WSL2 it opens straight from your Windows browser and auto-starts on boot, reached over Tailscale." }
     },
     {
       "@type": "Question",
@@ -158,7 +158,7 @@
   <img src="logo.svg" alt="agentpeek logo">
   <h1>Persistent Claude Code sessions,<br>in any browser.</h1>
   <p class="tagline">agentpeek is the free, self-hosted browser control panel for Claude Code. Start a
-     session on your Linux or WSL2 box, drive it as a terminal or a chat, and reach it from any
+     session on your Linux, macOS, or WSL2 box, drive it as a terminal or a chat, and reach it from any
      device over your tailnet — <strong>it keeps working when you close the laptop.</strong></p>
   <a class="cta" href="https://github.com/thrinz/agentpeek">Get it on GitHub</a>
   <a class="cta alt" href="https://github.com/thrinz/agentpeek#setup">Quick start</a>
@@ -256,6 +256,8 @@
   </section>
 
   <h2>Quick start</h2>
+
+  <h3>Linux / WSL2</h3>
   <pre><code>cd ~ &amp;&amp; git clone https://github.com/thrinz/agentpeek.git &amp;&amp; cd agentpeek
 ./setup.sh
 # reach it on your tailnet (HTTPS, tailnet-only):
@@ -268,6 +270,34 @@ tailscale serve --bg --https=9443 http://127.0.0.1:8090</code></pre>
      <a href="https://github.com/thrinz/agentpeek#prerequisites">full prerequisites</a>.
      Ports clashing (another service or WSL distro)? Run with
      <code>AGENTPEEK_PORT=9090 AGENTPEEK_TTYD_PORT=9091 ./setup.sh</code>.</p>
+
+  <h3>macOS</h3>
+  <pre><code># prerequisite: Homebrew (https://brew.sh) and Python 3.10+
+git clone https://github.com/thrinz/agentpeek.git &amp;&amp; cd agentpeek
+./setup-macos.sh
+# → open http://localhost:8090</code></pre>
+  <p>The app is identical on macOS; only the installer differs. <code>setup-macos.sh</code>
+     <code>brew install</code>s <strong>tmux</strong> and <strong>ttyd</strong>, installs <strong>Claude
+     Code</strong>, creates the venv, and renders three <strong>launchd</strong> user agents into
+     <code>~/Library/LaunchAgents</code> (<code>dev.agentpeek.tmux</code>, <code>dev.agentpeek.ttyd</code>,
+     <code>dev.agentpeek.app</code>) that start at login — no <code>systemd</code>, no linger. Manage it
+     with <code>launchctl kickstart -k gui/$(id -u)/dev.agentpeek.app</code> (restart) and tail
+     <code>~/Library/Logs/agentpeek/app.log</code>. Same port overrides apply. Install
+     <a href="https://tailscale.com/download">Tailscale for macOS</a>, then
+     <code>tailscale serve</code> works exactly as above.</p>
+
+  <h3>Docker (any OS, incl. Windows)</h3>
+  <pre><code>docker pull ghcr.io/thrinz/agentpeek:latest
+# the agent edits the projects tree you mount; set a Claude API key for UI mode
+PROJECTS_DIR=~/projects ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
+# → http://localhost:8090</code></pre>
+  <p>A prebuilt multi-arch image (<code>linux/amd64</code> + <code>linux/arm64</code>) is published to the
+     GitHub Container Registry, so agentpeek runs anywhere Docker does — <strong>Linux, macOS, or
+     Windows</strong> (Docker Desktop runs the Linux container on Mac/Windows); it's also the only way to
+     run it on Windows natively. <a href="https://github.com/thrinz/agentpeek/blob/main/docker-compose.yml"><code>docker-compose.yml</code></a>
+     mounts your <code>projects</code> tree and keeps app state (<code>~/.config/agentpeek</code>) and Claude
+     auth (<code>~/.claude</code>) in named volumes. It binds <code>127.0.0.1</code> on purpose — reach it
+     over your tailnet, never the open internet.</p>
 
   <h2>Frequently asked questions</h2>
   <details><summary>Which AI agents does it run?</summary>
@@ -283,9 +313,11 @@ tailscale serve --bg --https=9443 http://127.0.0.1:8090</code></pre>
   <details><summary>Can I use my Claude subscription?</summary>
     <p>Yes — sign in with your Pro/Max subscription from inside the app (the same OAuth flow as the
        terminal), or use an Anthropic API key, or point it at AWS Bedrock or Google Vertex AI.</p></details>
-  <details><summary>Does it work on WSL2?</summary>
-    <p>That's the home turf — runs in WSL2, opens from your Windows browser, and auto-starts on boot
-       via systemd user services.</p></details>
+  <details><summary>Which platforms does it run on?</summary>
+    <p>Linux and WSL2 (systemd user services), macOS (<code>setup-macos.sh</code> — Homebrew + launchd
+       agents), and anywhere via the prebuilt multi-arch Docker image — which is also the only way to run
+       it on Windows natively. On WSL2 it opens straight from your Windows browser and auto-starts on
+       boot.</p></details>
   <details><summary>Is it free?</summary>
     <p>Yes — free and open source under the MIT license.</p></details>
 </main>
