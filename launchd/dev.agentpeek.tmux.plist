@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- agentpeek: tmux server (keeps a 'main' session so the server survives login).
+<!-- agentpeek: dedicated tmux server on its own socket (-L agentpeek).
      Template — setup-macos.sh fills in the placeholders and installs to ~/Library/LaunchAgents.
      macOS counterpart of systemd/agentpeek-tmux.service. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -7,17 +7,18 @@
 <dict>
   <key>Label</key>
   <string>dev.agentpeek.tmux</string>
-  <!-- -A: attach-or-create, idempotent so reloads don't fail. Starts the tmux
-       server as a daemon, then exits (oneshot-like). Booting this agent out does
-       NOT kill the server or its sessions — the server detaches from launchd. -->
+  <!-- Start the dedicated server (own socket) as a daemon, then exit (oneshot-
+       like). The -f config sets `exit-empty off`, so it stays up with no sessions
+       — no placeholder needed. Booting this agent out does NOT kill the server or
+       its sessions; the server detaches from launchd. -->
   <key>ProgramArguments</key>
   <array>
     <string>@TMUX@</string>
-    <string>new-session</string>
-    <string>-A</string>
-    <string>-d</string>
-    <string>-s</string>
-    <string>main</string>
+    <string>-L</string>
+    <string>agentpeek</string>
+    <string>-f</string>
+    <string>@REPO@/conf/agentpeek-server.tmux.conf</string>
+    <string>start-server</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

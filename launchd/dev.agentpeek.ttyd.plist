@@ -28,6 +28,9 @@
   <dict>
     <key>PATH</key>
     <string>@PATH@</string>
+    <!-- Attach on the dedicated socket; agentpeek-attach reads this. -->
+    <key>AGENTPEEK_TMUX_SOCKET</key>
+    <string>agentpeek</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

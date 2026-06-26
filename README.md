@@ -432,11 +432,16 @@ host.
 
 ## Operational notes
 
-- **Stopping `agentpeek-tmux` kills the tmux server and all sessions.** Restart
-  the UI with `systemctl --user restart agentpeek agentpeek-ttyd` — these never
-  touch sessions.
-- Sessions do not survive a host reboot (out of scope for v1); the `main`
-  session is recreated at boot by `agentpeek-tmux.service`.
+- The tmux server runs on a **dedicated socket** (`tmux -L agentpeek`) owned by
+  `agentpeek-tmux.service`, in its own cgroup. So restarting or crashing the app
+  (`agentpeek` / `agentpeek-ttyd`) **never touches your sessions** — selected via
+  `AGENTPEEK_TMUX_SOCKET=agentpeek` (honored by `app/multiplexer.py` and
+  `bin/agentpeek-attach`; same socket in the launchd and Docker setups).
+- **Stopping `agentpeek-tmux` is the only thing that kills the tmux server and
+  all sessions.** It uses `exit-empty off`, so it also stays up with zero
+  sessions (no placeholder session needed). To reach it by hand:
+  `tmux -L agentpeek ls`.
+- Sessions do not survive a host reboot (out of scope for v1) — no tmux-resurrect.
 - Logs: `journalctl --user -u agentpeek -u agentpeek-ttyd -f`.
 - The sidebar polls every 3 s and on tab focus, so CLI-created sessions appear
   automatically.

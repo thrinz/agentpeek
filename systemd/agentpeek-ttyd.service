@@ -4,6 +4,9 @@ After=agentpeek-tmux.service
 Wants=agentpeek-tmux.service
 
 [Service]
+# Attach on the dedicated socket (see agentpeek-tmux.service); agentpeek-attach
+# reads AGENTPEEK_TMUX_SOCKET, matching app/multiplexer.py.
+Environment=AGENTPEEK_TMUX_SOCKET=agentpeek
 ExecStart=@TTYD@ --port @TTYD_PORT@ --interface 127.0.0.1 --writable --url-arg --base-path /term -t scrollback=10000 -t disableLeaveAlert=true @REPO@/bin/agentpeek-attach
 Restart=on-failure
 RestartSec=2

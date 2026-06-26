@@ -1,6 +1,7 @@
 [Unit]
 Description=agentpeek: tmux session manager web app
-After=agentpeek-ttyd.service
+After=agentpeek-tmux.service agentpeek-ttyd.service
+Wants=agentpeek-tmux.service
 
 [Service]
 WorkingDirectory=@REPO@
@@ -9,6 +10,9 @@ WorkingDirectory=@REPO@
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Tell the app which port ttyd listens on, so its reverse proxy targets match.
 Environment=AGENTPEEK_TTYD_PORT=@TTYD_PORT@
+# Talk to the dedicated tmux server on its own socket (agentpeek-tmux.service),
+# so app restarts/crashes never kill shell sessions. Matches agentpeek-attach.
+Environment=AGENTPEEK_TMUX_SOCKET=agentpeek
 # Optional secrets (AGENTPEEK_PASSWORD_HASH / AGENTPEEK_TOKEN / AGENTPEEK_SECRET).
 # The leading '-' makes the file optional, so this is a no-op until you create it.
 EnvironmentFile=-%h/.config/agentpeek/agentpeek.env

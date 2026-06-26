@@ -1,12 +1,17 @@
 [Unit]
-Description=agentpeek: tmux server (keeps a 'main' session so the server survives boot)
+Description=agentpeek: dedicated tmux server (own socket + cgroup; survives app restarts)
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# -A: idempotent — attach-or-create, so restarts don't fail.
-# Note: stopping this unit kills the tmux server and ALL sessions in it.
-ExecStart=/usr/bin/tmux new-session -A -d -s main
+# Dedicated socket (-L agentpeek) keeps the server isolated from the user's own
+# tmux, and the -f config sets `exit-empty off` so the server stays up with no
+# sessions — no placeholder session needed. Because the server lives in THIS
+# unit's cgroup, restarting or crashing agentpeek.service never kills it (the
+# default KillMode=control-group only reaps the offending unit's own cgroup).
+# Stopping THIS unit is the only thing that tears the sessions down.
+ExecStart=/usr/bin/tmux -L agentpeek -f @REPO@/conf/agentpeek-server.tmux.conf start-server
+ExecStop=/usr/bin/tmux -L agentpeek kill-server
 
 [Install]
 WantedBy=default.target

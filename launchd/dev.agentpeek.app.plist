@@ -27,6 +27,9 @@
     <!-- Tell the app which port ttyd listens on, so its reverse proxy matches. -->
     <key>AGENTPEEK_TTYD_PORT</key>
     <string>@TTYD_PORT@</string>
+    <!-- Talk to the dedicated tmux server on its own socket (matches agentpeek-attach). -->
+    <key>AGENTPEEK_TMUX_SOCKET</key>
+    <string>agentpeek</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
