@@ -43,6 +43,15 @@ RUN set -eux; \
 RUN curl -fsSL https://claude.ai/install.sh | bash \
  || echo "WARN: claude install failed at build time — UI mode needs it; install at runtime"
 
+# tmux opens terminal panes as LOGIN shells, which source /etc/profile and reset
+# PATH to the system default — dropping ~/.local/bin where the claude CLI lives,
+# so `claude` (and `cds`, which calls it) aren't found in terminal sessions. (UI
+# chat mode is unaffected: it inherits PATH from the app process.) Re-add
+# ~/.local/bin for login + interactive shells.
+RUN PLINE='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH";; esac'; \
+    printf '%s\n' "$PLINE" > /etc/profile.d/agentpeek-path.sh; \
+    printf '%s\n' "$PLINE" >> /etc/bash.bashrc
+
 WORKDIR /app
 
 # Python deps first for layer caching.
