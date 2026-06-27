@@ -26,6 +26,16 @@ if ! tmux "${socket_args[@]}" has-session -t "=$name" 2>/dev/null; then
   exit 1
 fi
 
+# Lazy Claude resume: a session recreated after a restart (restore_sessions in
+# app/multiplexer.py) carries a pending '@agentpeek_resume' command. Run it once
+# on first open, then clear it — so a restart doesn't relaunch every Claude at
+# once, only the sessions you actually open.
+resume_cmd="$(tmux "${socket_args[@]}" show-options -qv -t "=$name:" "@agentpeek_resume" 2>/dev/null || true)"
+if [[ -n "$resume_cmd" ]]; then
+  tmux "${socket_args[@]}" set-option -u -t "=$name:" "@agentpeek_resume" 2>/dev/null || true
+  tmux "${socket_args[@]}" send-keys -t "=$name:" "$resume_cmd" Enter 2>/dev/null || true
+fi
+
 # History above the visible screen (-E -1); attach redraws the screen itself.
 # Trailing ':' makes tmux parse the exact-match '=' as a session:window target
 # (a bare '=name' is rejected for pane-target commands).

@@ -96,7 +96,18 @@ app = FastAPI(title="agentpeek")
 
 
 @app.on_event("startup")
-async def _start_sweeper():
+async def _on_startup():
+    # Recreate terminal sessions that outlived a tmux-server death — a reboot, or
+    # a Docker container restart (where the server lives inside this container).
+    # No-op when they're still alive (e.g. a host app-only restart with the
+    # dedicated socket). AI sessions get a pending `cds --resume` that runs on
+    # first open, so this never spawns every Claude at once.
+    try:
+        n = mux.restore_sessions()
+        if n:
+            print(f"agentpeek: restored {n} terminal session(s) from manifest", flush=True)
+    except Exception as e:
+        print(f"agentpeek: session restore failed: {e}", flush=True)
     ui_agent.manager.start_sweeper()
 
 

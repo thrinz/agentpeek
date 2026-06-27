@@ -441,7 +441,14 @@ host.
   all sessions.** It uses `exit-empty off`, so it also stays up with zero
   sessions (no placeholder session needed). To reach it by hand:
   `tmux -L agentpeek ls`.
-- Sessions do not survive a host reboot (out of scope for v1) — no tmux-resurrect.
+- **Terminal sessions are restored after the tmux server dies** (a host reboot,
+  or a Docker container restart — where the server lives inside the app
+  container). agentpeek keeps a manifest at `~/.config/agentpeek/shell_sessions.json`
+  (name, dir, group, and for AI sessions a Claude session id) and recreates the
+  sessions on startup. AI sessions are **lazily resumed**: each is recreated empty
+  with a pending `cds --resume <id>` that `bin/agentpeek-attach` runs the first
+  time you open it, so a restart never spawns every Claude at once. Resume needs
+  Claude's transcripts (`~/.claude`) — already a persisted volume in Docker.
 - Logs: `journalctl --user -u agentpeek -u agentpeek-ttyd -f`.
 - The sidebar polls every 3 s and on tab focus, so CLI-created sessions appear
   automatically.

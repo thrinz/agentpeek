@@ -6,9 +6,12 @@ Targets use tmux's `=name` prefix for exact matching, since a bare `-t name`
 does prefix matching.
 """
 
+import json
 import os
 import re
 import subprocess
+import uuid
+from pathlib import Path
 
 # Dedicated tmux socket (tmux -L <socket>). Set to "agentpeek" by the systemd
 # unit so the server lives in its own cgroup (agentpeek-tmux.service) and isn't
@@ -16,6 +19,14 @@ import subprocess
 # so other consumers of this module are unaffected.
 TMUX_SOCKET = os.environ.get("AGENTPEEK_TMUX_SOCKET", "")
 _SOCKET_ARGS = ["-L", TMUX_SOCKET] if TMUX_SOCKET else []
+
+# Disk manifest of terminal sessions, so they can be recreated after the tmux
+# server dies (a reboot, or a Docker container restart — where the server lives
+# inside the app's container). Mirrors the live sessions + their agentpeek
+# options; restore_sessions() rebuilds from it on startup. On the same persisted
+# volume as the UI registry, so it survives container restarts.
+CONFIG_DIR = Path.home() / ".config" / "agentpeek"
+MANIFEST = CONFIG_DIR / "shell_sessions.json"
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # Session names additionally allow spaces. Still no '/' or '.', so they stay
@@ -140,6 +151,9 @@ def list_sessions() -> list[dict]:
                 "cwd": cwd or live_cwd.get(name),
             }
         )
+    # Keep the on-disk manifest in step with live sessions (cheap, write-on-change)
+    # so a restart can recreate them even without an explicit create/kill.
+    _persist_manifest()
     return sessions
 
 
@@ -164,12 +178,22 @@ def create(name: str, cwd=None, group: str | None = None, ai: bool = False,
         # show it later (this is the original location, not the live pane cwd).
         _tmux("set-option", "-t", f"={name}:", "@agentpeek_cwd", str(cwd))
     if ai:
+        # Give Claude an explicit session id we control, so that after a restart
+        # we can `cds --resume <id>` back into this exact conversation. Record it
+        # (+ the ai flag and topic) as session options so list/restore can read
+        # them; the manifest persists them across a tmux-server death.
+        sid = str(uuid.uuid4())
+        _tmux("set-option", "-t", f"={name}:", "@agentpeek_ai", "1")
+        _tmux("set-option", "-t", f"={name}:", "@agentpeek_claude_id", sid)
+        if notify_topic:
+            _tmux("set-option", "-t", f"={name}:", "@agentpeek_topic", notify_topic)
         # Type `cds` into the new shell as if the user ran it, so shell
         # aliases/functions resolve and the shell survives when it exits.
-        # A topic turns on ntfy push for that session (`cds <topic>`).
-        # Pane targets need the trailing ':' with an exact-match '='.
-        cmd = f"cds {notify_topic}" if notify_topic else "cds"
+        # A topic turns on ntfy push for that session (`cds <topic>`); cds
+        # forwards trailing flags to claude, so --session-id reaches it.
+        cmd = "cds" + (f" {notify_topic}" if notify_topic else "") + f" --session-id {sid}"
         _tmux("send-keys", "-t", f"={name}:", cmd, "Enter")
+    _persist_manifest()
 
 
 def rename(old: str, new: str) -> None:
@@ -181,6 +205,7 @@ def rename(old: str, new: str) -> None:
     if has(new):
         raise DuplicateSession(f"A session named '{new}' already exists.")
     _tmux("rename-session", "-t", f"={old}", new)
+    _persist_manifest()
 
 
 def set_group(name: str, group: str) -> None:
@@ -188,6 +213,7 @@ def set_group(name: str, group: str) -> None:
     if not has(name):
         raise NoSuchSession(f"No session named '{name}'.")
     _tmux("set-option", "-t", f"={name}:", "@agentpeek_group", group)
+    _persist_manifest()
 
 
 # Keys the mobile touch bar may send. tmux key names; C-<x> is Ctrl+<x>.
@@ -286,3 +312,90 @@ def kill(name: str) -> None:
     if not has(name):
         raise NoSuchSession(f"No session named '{name}'.")
     _tmux("kill-session", "-t", f"={name}")
+    _persist_manifest()
+
+
+# ---------------------------------------------------------------------------
+# Session persistence / restore-after-restart
+# ---------------------------------------------------------------------------
+
+# tmux -F fields used to snapshot a session's agentpeek metadata, tab-separated.
+_MANIFEST_FMT = (
+    "#{session_name}\t#{@agentpeek_cwd}\t#{@agentpeek_group}\t"
+    "#{@agentpeek_ai}\t#{@agentpeek_claude_id}\t#{@agentpeek_topic}"
+)
+
+
+def _persist_manifest() -> None:
+    """Write the current live sessions (name + agentpeek metadata) to disk so
+    they can be recreated if the tmux server dies. Best-effort: never raises,
+    and only rewrites the file when the snapshot actually changed."""
+    proc = _tmux("list-sessions", "-F", _MANIFEST_FMT, check=False)
+    data: dict = {}
+    if proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            parts = (line.split("\t") + [""] * 6)[:6]
+            name, cwd, group, ai, cid, topic = parts
+            if not name:
+                continue
+            data[name] = {
+                "cwd": cwd or None,
+                "group": group or "General",
+                "ai": ai == "1",
+                "claude_id": cid or None,
+                "topic": topic or None,
+            }
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        new = json.dumps(data, indent=2) + "\n"
+        if not MANIFEST.exists() or MANIFEST.read_text() != new:
+            MANIFEST.write_text(new)
+    except OSError:
+        pass  # persistence is best-effort; a poll will retry
+
+
+def restore_sessions() -> int:
+    """Recreate terminal sessions from the manifest that aren't currently alive.
+
+    Called once on startup. Sessions are recreated EMPTY (in their original
+    directory); AI sessions get an `@agentpeek_resume` option holding the command
+    to re-attach Claude to its prior conversation — agentpeek-attach runs it lazily
+    on first open, so a restart doesn't spawn every Claude at once. Returns the
+    number of sessions recreated. Best-effort: a bad entry is skipped, not fatal."""
+    try:
+        data = json.loads(MANIFEST.read_text())
+    except (OSError, ValueError):
+        return 0
+    restored = 0
+    for name, meta in data.items():
+        if not isinstance(meta, dict) or not NAME_RE.match(name) or has(name):
+            continue
+        cwd = meta.get("cwd")
+        args = ["new-session", "-d", "-s", name]
+        if cwd:
+            args += ["-c", str(cwd)]
+        try:
+            _tmux(*args)
+        except MuxError:
+            continue  # e.g. the directory no longer exists
+        tgt = f"={name}:"
+        if meta.get("group"):
+            _tmux("set-option", "-t", tgt, "@agentpeek_group", meta["group"], check=False)
+        if cwd:
+            _tmux("set-option", "-t", tgt, "@agentpeek_cwd", str(cwd), check=False)
+        if meta.get("ai"):
+            cid = meta.get("claude_id")
+            topic = meta.get("topic")
+            _tmux("set-option", "-t", tgt, "@agentpeek_ai", "1", check=False)
+            if cid:
+                _tmux("set-option", "-t", tgt, "@agentpeek_claude_id", cid, check=False)
+            if topic:
+                _tmux("set-option", "-t", tgt, "@agentpeek_topic", topic, check=False)
+            # Pending resume command, run by agentpeek-attach on first open.
+            # --resume <id> reconnects the exact conversation; fall back to
+            # --continue (most recent in the dir) if we never captured an id.
+            resume = "cds" + (f" {topic}" if topic else "")
+            resume += f" --resume {cid}" if cid else " --continue"
+            _tmux("set-option", "-t", tgt, "@agentpeek_resume", resume, check=False)
+        restored += 1
+    return restored
