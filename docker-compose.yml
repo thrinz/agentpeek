@@ -1,4 +1,8 @@
-# Run agentpeek from the published image:  docker compose up -d
+# Run agentpeek from the published image:
+#   Pro/Max subscription (no API key — sign in from the in-app Claude chip):
+#     PROJECTS_DIR=~/projects docker compose up -d
+#   or with an Anthropic API key for UI (chat) mode:
+#     PROJECTS_DIR=~/projects ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
 # Build locally instead:  uncomment `build: .` and run  docker compose up -d --build
 services:
   agentpeek:
@@ -11,9 +15,10 @@ services:
     ports:
       - "127.0.0.1:8090:8090"
     environment:
-      # UI (chat) mode needs Claude auth. Easiest: an API key here. Alternatively
-      # mount your host ~/.claude (below) to reuse a subscription login, or sign in
-      # afterward from the in-app Claude chip (persists in the config volume).
+      # UI (chat) mode needs Claude auth, but the API key is OPTIONAL. Leave it
+      # unset to use a Pro/Max subscription — sign in from the in-app Claude chip
+      # (persists in the ~/.claude volume), or mount your host ~/.claude (below)
+      # to reuse an existing login. Set a key here only if you prefer API billing.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Optional browser login password (hashed). Generate one with:
       #   docker run --rm ghcr.io/thrinz/agentpeek:latest \

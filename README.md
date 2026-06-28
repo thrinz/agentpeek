@@ -189,15 +189,22 @@ docker pull ghcr.io/thrinz/agentpeek:latest
 The quickest start is [`docker-compose.yml`](docker-compose.yml):
 
 ```bash
-# the agent edits the projects tree you mount; set a Claude API key for UI mode
+# the agent edits the projects tree you mount. The API key is OPTIONAL:
+
+# Pro/Max subscription — no key; sign in from the in-app Claude chip after it starts:
+PROJECTS_DIR=~/projects docker compose up -d
+
+# …or use an Anthropic API key for UI (chat) mode:
 PROJECTS_DIR=~/projects ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
 # → http://localhost:8090
 ```
 
 It mounts your `projects` tree (the agent's working files), and named volumes for
 the app state (`~/.config/agentpeek`) and Claude auth (`~/.claude`) so they survive
-restarts. UI (chat) mode needs Claude signed in — pass `ANTHROPIC_API_KEY`, mount
-your host `~/.claude`, or sign in from the in-app Claude chip after first boot.
+restarts. UI (chat) mode needs Claude signed in, but the **API key is optional** —
+leave it out and sign in with your **Pro/Max subscription** from the in-app Claude
+chip (it persists in the `~/.claude` volume), mount your host `~/.claude` to reuse an
+existing login, or pass `ANTHROPIC_API_KEY` for per-token billing.
 
 > **Exposure:** the compose file binds **`127.0.0.1` on purpose** — agentpeek runs
 > an autonomous agent, so don't publish it on the open internet. Reach it over your

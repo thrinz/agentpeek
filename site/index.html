@@ -294,13 +294,20 @@ tail -f ~/Library/Logs/agentpeek/app.log             # live logs</code></pre>
 
   <h3>Docker (any OS, incl. Windows)</h3>
   <pre><code>docker pull ghcr.io/thrinz/agentpeek:latest
-# the agent edits the projects tree you mount; set a Claude API key for UI mode
+
+# Pro/Max subscription — no API key; sign in from the in-app Claude chip after it starts:
+PROJECTS_DIR=~/projects docker compose up -d
+
+# …or use an Anthropic API key for UI (chat) mode:
 PROJECTS_DIR=~/projects ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
 # → http://localhost:8090</code></pre>
   <p>A prebuilt multi-arch image (<code>linux/amd64</code> + <code>linux/arm64</code>) is published to the
      GitHub Container Registry, so agentpeek runs anywhere Docker does — <strong>Linux, macOS, or
      Windows</strong> (Docker Desktop runs the Linux container on Mac/Windows); it's also the only way to
-     run it on Windows natively. <a href="https://github.com/thrinz/agentpeek/blob/main/docker-compose.yml"><code>docker-compose.yml</code></a>
+     run it on Windows natively. The <strong>API key is optional</strong>: leave it out and sign in with
+     your <strong>Pro/Max subscription</strong> from the in-app Claude chip (it persists in the
+     <code>~/.claude</code> volume), or mount your host <code>~/.claude</code> to reuse an existing login.
+     <a href="https://github.com/thrinz/agentpeek/blob/main/docker-compose.yml"><code>docker-compose.yml</code></a>
      mounts your <code>projects</code> tree and keeps app state (<code>~/.config/agentpeek</code>) and Claude
      auth (<code>~/.claude</code>) in named volumes. It binds <code>127.0.0.1</code> on purpose — reach it
      over your tailnet, never the open internet. The compose file also runs
