@@ -278,13 +278,19 @@ git clone https://github.com/thrinz/agentpeek.git &amp;&amp; cd agentpeek
 # → open http://localhost:8090</code></pre>
   <p>The app is identical on macOS; only the installer differs. <code>setup-macos.sh</code>
      <code>brew install</code>s <strong>tmux</strong> and <strong>ttyd</strong>, installs <strong>Claude
-     Code</strong>, creates the venv, and renders three <strong>launchd</strong> user agents into
-     <code>~/Library/LaunchAgents</code> (<code>dev.agentpeek.tmux</code>, <code>dev.agentpeek.ttyd</code>,
-     <code>dev.agentpeek.app</code>) that start at login — no <code>systemd</code>, no linger. Manage it
-     with <code>launchctl kickstart -k gui/$(id -u)/dev.agentpeek.app</code> (restart) and tail
-     <code>~/Library/Logs/agentpeek/app.log</code>. Same port overrides apply. Install
-     <a href="https://tailscale.com/download">Tailscale for macOS</a>, then
-     <code>tailscale serve</code> works exactly as above.</p>
+     Code</strong> (skipped if already present), creates the venv, and installs three background
+     <strong>launchd</strong> agents into <code>~/Library/LaunchAgents</code>
+     (<code>dev.agentpeek.tmux</code>, <code>dev.agentpeek.ttyd</code>, <code>dev.agentpeek.app</code>).
+     launchd is macOS's equivalent of <code>systemd</code>: the agents run in the <strong>background and
+     start automatically when you log in</strong> (no linger needed). It also prompts for a login
+     password and a projects folder (or set <code>AGENTPEEK_PROJECTS_DIR=…</code>). Same port overrides
+     apply, and <a href="https://tailscale.com/download">Tailscale for macOS</a> +
+     <code>tailscale serve</code> work exactly as above.</p>
+  <p>Manage it with <code>launchctl</code> — the <code>systemctl</code> equivalent:</p>
+  <pre><code>launchctl print     gui/$(id -u)/dev.agentpeek.app   # status
+launchctl kickstart -k gui/$(id -u)/dev.agentpeek.app   # restart
+launchctl bootout   gui/$(id -u)/dev.agentpeek.app   # stop
+tail -f ~/Library/Logs/agentpeek/app.log             # live logs</code></pre>
 
   <h3>Docker (any OS, incl. Windows)</h3>
   <pre><code>docker pull ghcr.io/thrinz/agentpeek:latest
@@ -321,6 +327,12 @@ PROJECTS_DIR=~/projects ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
        agents), and anywhere via the prebuilt multi-arch Docker image — which is also the only way to run
        it on Windows natively. On WSL2 it opens straight from your Windows browser and auto-starts on
        boot.</p></details>
+  <details><summary>Does it run in the background and start automatically?</summary>
+    <p>Yes. On Linux/WSL2 it's a <code>systemd</code> user service (auto-starts at boot via linger); on
+       macOS it's a <code>launchd</code> background agent (auto-starts at login — manage it with
+       <code>launchctl</code>, the <code>systemctl</code> equivalent); in Docker the container runs with
+       <code>restart: unless-stopped</code>. Terminal sessions are even recreated after a reboot or
+       container restart, and AI sessions resume their Claude conversation when you reopen them.</p></details>
   <details><summary>Is it free?</summary>
     <p>Yes — free and open source under the MIT license.</p></details>
 </main>

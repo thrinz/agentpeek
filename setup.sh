@@ -159,6 +159,24 @@ fi
 # Apply to an already-running server too (no-op if none is running)
 tmux source-file "$REPO/conf/agentpeek.tmux.conf" 2>/dev/null || true
 
+# === projects folder ========================================================
+# The agent's working tree — the directory agentpeek's create dialog browses.
+# Same policy as the password below: AGENTPEEK_PROJECTS_DIR=... sets it
+# explicitly, a TTY prompts (Enter accepts the default), otherwise it defaults to
+# ~/projects. Created here if missing, and written to the env file (loaded via
+# EnvironmentFile=) BEFORE the services start so the app picks it up on first boot.
+default_projects="$HOME/projects"
+projects_dir="${AGENTPEEK_PROJECTS_DIR:-}"
+if [[ -z "$projects_dir" && -t 0 ]]; then
+  read -rep $'\nProjects folder for agentpeek to manage? ['"$default_projects"'] ' projects_dir
+fi
+projects_dir="${projects_dir:-$default_projects}"
+projects_dir="${projects_dir/#\~/$HOME}"          # expand a leading ~
+mkdir -p "$projects_dir"                            # create it if it doesn't exist
+projects_dir="$(cd "$projects_dir" && pwd -P)"     # canonical absolute path
+set_env_kv AGENTPEEK_PROJECTS_DIR "$projects_dir"
+echo "    projects folder: $projects_dir"
+
 echo "==> 5/6 systemd user services"
 mkdir -p "$HOME/.config/systemd/user"
 for unit in agentpeek-tmux agentpeek-ttyd agentpeek; do
