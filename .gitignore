@@ -4,3 +4,4 @@ __pycache__/
 .agentpeek/
 .claude/settings.local.json
 posts/
+demo/
