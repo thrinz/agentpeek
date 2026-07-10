@@ -79,7 +79,7 @@
     {
       "@type": "Question",
       "name": "What if agentpeek runs on the laptop itself?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Nothing is lost — tmux sessions and background agents survive sleep and resume when the machine wakes. But a sleeping machine does no work: for sessions that keep running with the lid shut, host agentpeek on a machine that stays awake — a desktop, home server, WSL2 box, or a small cloud VM — or set the laptop to stay awake on lid-close while plugged in." }
+      "acceptedAnswer": { "@type": "Answer", "text": "Nothing is lost — tmux sessions and background agents survive sleep and resume when the machine wakes. But a sleeping machine does no work: for sessions that keep running with the lid shut, host agentpeek on a machine that stays awake — a desktop, home server, WSL2 machine, or a small cloud VM — or set the laptop to stay awake on lid-close while plugged in." }
     },
     {
       "@type": "Question",
@@ -180,9 +180,9 @@
   <img src="logo.svg" alt="agentpeek logo">
   <h1>Persistent Claude Code sessions,<br>in any browser.</h1>
   <p class="tagline">agentpeek is the free, self-hosted browser control panel for Claude Code. Sessions
-     live on your always-on box — a desktop, home server, WSL2 machine, or cloud VM — and you drive them
-     as a terminal or a chat from any device over your tailnet. <strong>Your laptop is just a window:
-     close it, and the session keeps working.</strong></p>
+     are persistent and accessible from anywhere: they run on the host machine, not in the browser, and
+     you drive them as a terminal or a chat from any device over your tailnet. <strong>Your laptop is
+     just a window — close it, and the session keeps working.</strong></p>
   <a class="cta" href="https://github.com/thrinz/agentpeek">Get it on GitHub</a>
   <a class="cta alt" href="https://github.com/thrinz/agentpeek#setup">Quick start</a>
   <p class="badges">
@@ -367,7 +367,7 @@ PROJECTS_DIR=~/projects ANTHROPIC_API_KEY=sk-ant-... docker compose up -d
   <details><summary>What if agentpeek runs on the laptop itself?</summary>
     <p>Nothing is lost — tmux sessions and background agents survive sleep and resume when the machine
        wakes. But a sleeping machine does no work: for sessions that keep running with the lid shut, host
-       agentpeek on a machine that stays awake — a desktop, home server, WSL2 box, or a small cloud VM
+       agentpeek on a machine that stays awake — a desktop, home server, WSL2 machine, or a small cloud VM
        (there's a <a href="https://github.com/thrinz/agentpeek/blob/main/deploy/cloud-init.sh">one-shot
        deploy script</a>) — or set your laptop to stay awake on lid-close while plugged in. Your laptop
        is then just another browser onto the same sessions.</p></details>
