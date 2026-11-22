@@ -96,7 +96,7 @@ def list_sessions() -> list[dict]:
     proc = _tmux(
         "list-sessions",
         "-F",
-        "#{session_name}\t#{session_created}\t#{session_attached}\t#{@agentpeek_group}\t#{@agentpeek_cwd}\t#{window_activity}",
+        "#{session_name}\t#{session_created}\t#{session_attached}\t#{@agentpeek_group}\t#{@agentpeek_cwd}\t#{window_activity}\t#{@agentpeek_archived}",
         check=False,
     )
     if proc.returncode != 0:
@@ -126,7 +126,8 @@ def list_sessions() -> list[dict]:
 
     sessions = []
     for line in proc.stdout.splitlines():
-        name, created, attached, group, cwd, activity = line.split("\t", 5)
+        name, created, attached, group, cwd, activity, archived = (
+            line.split("\t") + [""] * 7)[:7]
         busy = name in foreground
         sessions.append(
             {
@@ -149,6 +150,8 @@ def list_sessions() -> list[dict]:
                 # Directory the session was created in; fall back to the active
                 # pane's live path when nothing was stored at creation.
                 "cwd": cwd or live_cwd.get(name),
+                # Archived sessions keep running; clients just file them away.
+                "archived": archived == "1",
             }
         )
     # Keep the on-disk manifest in step with live sessions (cheap, write-on-change)
@@ -213,6 +216,18 @@ def set_group(name: str, group: str) -> None:
     if not has(name):
         raise NoSuchSession(f"No session named '{name}'.")
     _tmux("set-option", "-t", f"={name}:", "@agentpeek_group", group)
+    _persist_manifest()
+
+
+def set_archived(name: str, archived: bool) -> None:
+    """Flag a session as archived (hidden from the main list) or restore it.
+    Purely a label: the session and whatever runs in it are left alone."""
+    if not has(name):
+        raise NoSuchSession(f"No session named '{name}'.")
+    if archived:
+        _tmux("set-option", "-t", f"={name}:", "@agentpeek_archived", "1")
+    else:
+        _tmux("set-option", "-u", "-t", f"={name}:", "@agentpeek_archived", check=False)
     _persist_manifest()
 
 
@@ -322,7 +337,8 @@ def kill(name: str) -> None:
 # tmux -F fields used to snapshot a session's agentpeek metadata, tab-separated.
 _MANIFEST_FMT = (
     "#{session_name}\t#{@agentpeek_cwd}\t#{@agentpeek_group}\t"
-    "#{@agentpeek_ai}\t#{@agentpeek_claude_id}\t#{@agentpeek_topic}"
+    "#{@agentpeek_ai}\t#{@agentpeek_claude_id}\t#{@agentpeek_topic}\t"
+    "#{@agentpeek_archived}"
 )
 
 
@@ -334,8 +350,8 @@ def _persist_manifest() -> None:
     data: dict = {}
     if proc.returncode == 0:
         for line in proc.stdout.splitlines():
-            parts = (line.split("\t") + [""] * 6)[:6]
-            name, cwd, group, ai, cid, topic = parts
+            parts = (line.split("\t") + [""] * 7)[:7]
+            name, cwd, group, ai, cid, topic, archived = parts
             if not name:
                 continue
             data[name] = {
@@ -344,6 +360,7 @@ def _persist_manifest() -> None:
                 "ai": ai == "1",
                 "claude_id": cid or None,
                 "topic": topic or None,
+                "archived": archived == "1",
             }
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -383,6 +400,8 @@ def restore_sessions() -> int:
             _tmux("set-option", "-t", tgt, "@agentpeek_group", meta["group"], check=False)
         if cwd:
             _tmux("set-option", "-t", tgt, "@agentpeek_cwd", str(cwd), check=False)
+        if meta.get("archived"):
+            _tmux("set-option", "-t", tgt, "@agentpeek_archived", "1", check=False)
         if meta.get("ai"):
             cid = meta.get("claude_id")
             topic = meta.get("topic")

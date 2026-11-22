@@ -528,6 +528,7 @@ class UIManager:
                 "foreground": "thinking" if (r and r.busy) else None,
                 "created": meta.get("created", 0),
                 "attached": False,
+                "archived": bool(meta.get("archived")),
                 "attach_command": "",
             })
         return out
@@ -573,6 +574,15 @@ class UIManager:
         r = self.runners.get(name)
         if r:
             r.group = group
+        self._persist_registry()
+
+    def set_archived(self, name, archived: bool):
+        if name not in self.registry:
+            return
+        if archived:
+            self.registry[name]["archived"] = True
+        else:
+            self.registry[name].pop("archived", None)
         self._persist_registry()
 
     def rename(self, old, new):

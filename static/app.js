@@ -23,7 +23,6 @@ const groupState = JSON.parse(localStorage.getItem('agentpeek-groups') || '{}');
 
 // Sidebar grouping mode: false = group by the logical group, true = group by
 // each session's actual folder location (its working directory).
-let groupByFolder = localStorage.getItem('agentpeek-groupby') === 'folder';
 
 // Last-seen tmux activity epoch per shell session, used to tell "actively
 // generating" (timestamp advancing between polls) from "process idle at its
@@ -67,8 +66,8 @@ const api = {
   create: (body) => req('POST', '/api/sessions', body),
   rename: (name, newName) =>
     req('PATCH', `/api/sessions/${encodeURIComponent(name)}`, { new_name: newName }),
-  move: (name, group) =>
-    req('PATCH', `/api/sessions/${encodeURIComponent(name)}`, { group }),
+  archive: (name, archived) =>
+    req('PATCH', `/api/sessions/${encodeURIComponent(name)}`, { archived }),
   kill: (name) => req('DELETE', `/api/sessions/${encodeURIComponent(name)}`),
   keys: (name, keys) =>
     req('POST', `/api/sessions/${encodeURIComponent(name)}/keys`, { keys }),
@@ -80,8 +79,6 @@ const api = {
   config: () => req('GET', '/api/config'),
   dirs: (path) => req('GET', `/api/dirs?path=${encodeURIComponent(path)}`),
   mkdir: (path) => req('POST', '/api/dirs', { path }),
-  createFolder: (path) => req('POST', '/api/folders', { path }),
-  deleteFolder: (path) => req('DELETE', `/api/folders/${encodeURIComponent(path)}`),
   claudeStatus: () => req('GET', '/api/claude/status'),
   claudeStart: () => req('POST', '/api/claude/login/start'),
   claudeCode: (code) => req('POST', '/api/claude/login/code', { code }),
@@ -94,62 +91,6 @@ const api = {
 
 async function loadConfig() {
   try { config = await api.config(); } catch { /* keep current */ }
-}
-
-/* ---------- folder helpers ---------- */
-
-const MAX_FOLDER_DEPTH = 3; // top-level + two nested levels
-
-function folderTree() {
-  const tops = [];
-  const children = new Map();
-  for (const f of config.folders) {
-    const cut = f.lastIndexOf('/');
-    if (cut === -1) {
-      tops.push(f);
-    } else {
-      const parent = f.slice(0, cut);
-      if (!children.has(parent)) children.set(parent, []);
-      children.get(parent).push(f);
-    }
-  }
-  tops.sort((a, b) => a.localeCompare(b));
-  children.forEach((list) => list.sort((a, b) => a.localeCompare(b)));
-  return { tops, children };
-}
-
-async function addFolder(parent) {
-  let name = '', error = '';
-  for (;;) {
-    name = await ask({
-      title: parent ? `New subgroup in "${parent}"` : 'New group',
-      msg: NAME_HINT, input: name, okLabel: 'Create', error,
-    });
-    if (name === null) return;
-    if (!NAME_RE.test(name)) { error = NAME_HINT; continue; }
-    try {
-      await api.createFolder(parent ? `${parent}/${name}` : name);
-      await loadConfig();
-      render();
-      return;
-    } catch (e) { error = e.message; }
-  }
-}
-
-async function deleteFolder(path) {
-  const ok = await ask({
-    title: 'Delete group',
-    msg: `Delete group "${path}"?`,
-    okLabel: 'Delete', danger: true,
-  });
-  if (!ok) return;
-  try {
-    await api.deleteFolder(path);
-  } catch (e) {
-    await ask({ title: 'Could not delete', msg: e.message, okLabel: 'OK' });
-  }
-  await loadConfig();
-  render();
 }
 
 /* ---------- generic confirm/prompt dialog ---------- */
@@ -178,34 +119,11 @@ function ask({ title, msg = '', input = null, okLabel = 'OK', danger = false, er
 
 /* ---------- create dialog ---------- */
 
-const cstate = { group: null, mode: 'ai', cwd: null, type: 'shell' };
+const cstate = { mode: 'ai', cwd: null, type: 'shell' };
 
 function clearFieldError(el) {
   el.classList.remove('invalid');
   $('c-error').textContent = '';
-}
-
-function renderFolderPicker() {
-  const box = $('c-folders');
-  box.textContent = '';
-  const { tops, children } = folderTree();
-  const addRow = (path, depth) => {
-    const row = document.createElement('div');
-    row.className = 'folder-row';
-    row.style.paddingLeft = `${8 + depth * 18}px`;
-    row.textContent = path.split('/').pop();
-    row.addEventListener('click', () => {
-      box.querySelectorAll('.folder-row.selected')
-        .forEach((r) => r.classList.remove('selected'));
-      row.classList.add('selected');
-      cstate.group = path;
-      clearFieldError(box);
-    });
-    if (path === cstate.group) row.classList.add('selected');
-    box.appendChild(row);
-    for (const child of children.get(path) || []) addRow(child, depth + 1);
-  };
-  for (const top of tops) addRow(top, 0);
 }
 
 function setCwd(rel, el) {
@@ -347,21 +265,16 @@ async function newDir() {
   await buildDirTree(rel);
 }
 
-function openCreateDialog(preselectGroup = null, preselectCwd = null) {
+function openCreateDialog(preselectCwd = null) {
   $('c-name').value = '';
   $('c-error').textContent = '';
-  for (const id of ['c-name', 'c-folders', 'c-dirtree']) {
+  for (const id of ['c-name', 'c-dirtree']) {
     $(id).classList.remove('invalid');
   }
-  // Default to the General group when the caller didn't preselect one (and it
-  // still exists); the user can pick another in the folder picker.
-  cstate.group = preselectGroup
-    || (config.folders.includes(DEFAULT_FOLDER) ? DEFAULT_FOLDER : null);
   cstate.mode = 'ai';
   cstate.type = 'shell';
   cstate.cwd = null;   // mandatory — a real directory, not the projects root
 
-  renderFolderPicker();
   document.querySelectorAll('input[name="c-mode"]').forEach((r) => {
     r.checked = r.value === cstate.mode;
   });
@@ -418,11 +331,6 @@ async function submitCreate() {
     $('c-name').classList.add('invalid');
     return;
   }
-  if (!cstate.group) {
-    $('c-error').textContent = 'Please choose a group.';
-    $('c-folders').classList.add('invalid');
-    return;
-  }
   if (!cstate.cwd) {
     $('c-error').textContent = 'Please choose a working directory.';
     $('c-dirtree').classList.add('invalid');
@@ -441,7 +349,7 @@ async function submitCreate() {
   }
   try {
     const mode = cstate.type === 'ui' ? 'ui' : cstate.mode;
-    await api.create({ name, group: cstate.group, cwd: cstate.cwd, mode, notify_topic });
+    await api.create({ name, cwd: cstate.cwd, mode, notify_topic });
   } catch (e) {
     $('c-error').textContent = e.message;
     return;
@@ -587,58 +495,8 @@ function sessionRow(s) {
   return li;
 }
 
-function folderSection(path, buckets, children) {
-  const childPaths = children.get(path) || [];
-  const det = document.createElement('details');
-  det.className = 'group' + (path.includes('/') ? ' subgroup' : '');
-  det.open = groupState[path] !== false;
-  det.addEventListener('toggle', () => {
-    groupState[path] = det.open;
-    localStorage.setItem('agentpeek-groups', JSON.stringify(groupState));
-  });
-
-  const items = buckets.get(path) || [];
-
-  const sum = document.createElement('summary');
-  const label = document.createElement('span');
-  label.textContent = path.split('/').pop();
-  sum.appendChild(label);
-
-  const count = document.createElement('span');
-  count.className = 'count';
-  count.textContent = items.length;
-  sum.appendChild(count);
-
-  const menuBtn = document.createElement('button');
-  menuBtn.className = 'menu-btn';
-  menuBtn.textContent = '⋮';
-  menuBtn.title = 'Group actions';
-  menuBtn.addEventListener('click', (e) => {
-    e.preventDefault(); // don't toggle the <details>
-    e.stopPropagation();
-    openFolderMenu(path, menuBtn);
-  });
-  sum.appendChild(menuBtn);
-  det.appendChild(sum);
-
-  const body = document.createElement('div');
-  body.className = 'group-body';
-  for (const child of childPaths) {
-    body.appendChild(folderSection(child, buckets, children));
-  }
-  for (const s of items) body.appendChild(sessionRow(s));
-  if (!items.length && !childPaths.length) {
-    const empty = document.createElement('div');
-    empty.className = 'group-empty';
-    empty.textContent = 'no sessions';
-    body.appendChild(empty);
-  }
-  det.appendChild(body);
-  return det;
-}
-
-// One sidebar section per distinct folder location, used when grouping by
-// the actual working directory rather than the logical group.
+// One sidebar section per distinct folder location (the directory a session
+// runs in) — folders are the only way sessions are organised.
 function locationSection(path, items) {
   const det = document.createElement('details');
   det.className = 'group';
@@ -685,9 +543,103 @@ function locationSection(path, items) {
 
 const NO_LOCATION = '(no location)';
 
+// Archived sessions keep running but are filed away: the sidebar shows either
+// the live ones or (with the archive button on) only the archived ones.
+let showArchived = false;
+const shownSessions = () => sessions.filter((s) => !!s.archived === showArchived);
+
+async function setArchived(list, archived) {
+  try {
+    await Promise.all(list.map((s) => api.archive(s.name, archived)));
+  } catch (e) {
+    flash(e.message || 'Could not update the session.');
+  }
+  if (!archived) {
+    // Restoring lands back in the main list at folder level: leave the
+    // archive and the recent sort, and open the folders restored into.
+    showArchived = false;
+    sortRecent = false;
+    localStorage.setItem('agentpeek-recent', '0');
+    for (const s of list) groupState[`loc:${s.cwd || NO_LOCATION}`] = true;
+    localStorage.setItem('agentpeek-groups', JSON.stringify(groupState));
+    syncViewButtons();
+  }
+  await refresh();
+}
+
+function syncViewButtons() {
+  $('archive-view-btn').classList.toggle('active', showArchived);
+  $('archive-view-btn').title = showArchived ? 'Back to active sessions' : 'Show archived sessions';
+  $('recent-view-btn').classList.toggle('active', sortRecent);
+}
+
+// Terminate every session in a folder location ("delete the folder" — the
+// directory on disk is not touched; the folder leaves the sidebar because
+// nothing runs in it any more).
+async function killAll(label, list) {
+  if (!list.length) return;
+  const ok = await ask({
+    title: 'Delete folder',
+    msg: `Terminate all ${list.length} session(s) in "${label}"? Everything running in them will be killed. Files on disk are not deleted.`,
+    okLabel: 'Terminate all', danger: true,
+  });
+  if (!ok) return;
+  for (const s of list) {
+    try { await api.kill(s.name); } catch (e) { flash(e.message); }
+    if (active === s.name) detach();
+  }
+  await refresh();
+}
+
+// "Recently active" view: one flat list, most recent first. Activity is the
+// last terminal output; chat sessions don't report it, so they fall back to
+// when they were created.
+let sortRecent = localStorage.getItem('agentpeek-recent') === '1';
+const lastActive = (s) => s.activity || s.created || 0;
+
+function agoText(epoch) {
+  if (!epoch) return '';
+  const sec = Math.max(0, Math.floor(Date.now() / 1000) - epoch);
+  if (sec < 60) return 'now';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+  return `${Math.floor(sec / 86400)}d`;
+}
+
+function renderRecent(list) {
+  const items = shownSessions().sort(
+    (a, b) => lastActive(b) - lastActive(a) || a.name.localeCompare(b.name));
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'group-empty';
+    empty.textContent = 'no sessions';
+    list.appendChild(empty);
+  }
+  for (const s of items) {
+    const row = sessionRow(s);
+    const ago = document.createElement('span');
+    ago.className = 'ago';
+    ago.textContent = agoText(lastActive(s));
+    const folder = s.cwd ? s.cwd.split('/').filter(Boolean).pop() : '';
+    ago.title = (folder ? `${folder} · ` : '') + 'last active';
+    row.insertBefore(ago, row.querySelector('.menu-btn'));
+    list.appendChild(row);
+  }
+}
+
+// Archived view: always grouped by folder location, under a small heading.
+function renderArchived(list) {
+  const n = shownSessions().length;
+  const head = document.createElement('div');
+  head.className = 'group-empty';
+  head.textContent = n ? `Archived (${n})` : 'No archived sessions';
+  list.appendChild(head);
+  renderByFolder(list);
+}
+
 function renderByFolder(list) {
   const buckets = new Map();
-  for (const s of sessions) {
+  for (const s of shownSessions()) {
     const key = s.cwd || NO_LOCATION;
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(s);
@@ -699,16 +651,14 @@ function renderByFolder(list) {
 function render() {
   const list = $('session-list');
   list.textContent = '';
-  if (groupByFolder) { renderByFolder(list); return; }
-  const valid = new Set(config.folders);
-  const buckets = new Map(config.folders.map((f) => [f, []]));
-  for (const s of sessions) {
-    const g = valid.has(s.group) ? s.group : DEFAULT_FOLDER;
-    buckets.get(g).push(s);
-  }
-  const { tops, children } = folderTree();
-  for (const top of tops) {
-    list.appendChild(folderSection(top, buckets, children));
+  if (showArchived) { renderArchived(list); return; }
+  if (sortRecent) { renderRecent(list); return; }
+  renderByFolder(list);
+  if (!shownSessions().length) {
+    const empty = document.createElement('div');
+    empty.className = 'group-empty';
+    empty.textContent = 'no sessions';
+    list.appendChild(empty);
   }
 }
 
@@ -754,13 +704,13 @@ function openSessionMenu(s, anchor) {
     ['Info…', () => sessionInfo(s), ''],
     ['Rename…', () => renameSession(s), ''],
   ];
-  if (config.folders.length > 1) {
-    items.push(['Move to group…', () => moveSession(s, anchor), '']);
-  }
   if (s.kind !== 'ui') {
     items.push(['Copy SSH attach command', () => copyText(sshAttachCommand(s.name)), '']);
     items.push(['Copy local attach command', () => copyText(s.attach_command), '']);
   }
+  items.push(s.archived
+    ? ['Restore', () => setArchived([s], false), '']
+    : ['Archive', () => setArchived([s], true), '']);
   items.push(['Terminate…', () => killSession(s), 'danger']);
   showMenu(items, anchor);
 }
@@ -771,44 +721,20 @@ function sessionInfo(s) {
   const location = s.cwd || 'unknown (created from the CLI)';
   ask({
     title: `"${s.name}"`,
-    msg: `Group: ${s.group}\nLocation: ${location}`,
+    msg: `Location: ${location}`,
     okLabel: 'OK',
   });
 }
 
-// Second-level menu: pick a destination folder for the session.
-function moveSession(s, anchor) {
-  const targets = config.folders.filter((f) => f !== s.group);
-  if (!targets.length) { flash('No other group to move to.'); return; }
-  showMenu(targets.map((f) => [f.replaceAll('/', ' / '),
-    () => doMove(s, f), '']), anchor);
-}
-
-async function doMove(s, group) {
-  try {
-    await api.move(s.name, group);
-    await refresh();
-  } catch (e) {
-    flash(e.message || 'Could not move the session.');
-  }
-}
-
-function openFolderMenu(path, anchor) {
-  const items = [];
-  items.push(['Create session…', () => openCreateDialog(path), '']);
-  if (path.split('/').length < MAX_FOLDER_DEPTH) {
-    items.push(['New subgroup…', () => addFolder(path), '']);
-  }
-  if (path !== DEFAULT_FOLDER) {
-    items.push(['Delete group…', () => deleteFolder(path), 'danger']);
-  }
-  if (items.length) showMenu(items, anchor);
-}
-
-// Folder-view (group-by-location) menu: create a new session in this directory.
+// Folder menu: create a session in this directory, or archive/delete the folder.
 function openLocationMenu(path, anchor) {
+  const here = shownSessions().filter((s) => s.cwd === path);
   showMenu([
-    ['Create session…', () => openCreateDialog(null, cwdToRel(path)), ''],
+    ['Create session…', () => openCreateDialog(cwdToRel(path)), ''],
+    showArchived
+      ? ['Restore folder', () => setArchived(here, false), '']
+      : ['Archive folder', () => setArchived(here, true), ''],
+    ['Delete folder…', () => killAll(path.split('/').filter(Boolean).pop(), here), 'danger'],
   ], anchor);
 }
 
@@ -2208,13 +2134,17 @@ $('theme-toggle').addEventListener('click', () => {
 });
 
 $('create-btn').addEventListener('click', () => openCreateDialog());
-$('add-folder-btn').addEventListener('click', () => addFolder(null));
-
-$('folder-view-btn').classList.toggle('active', groupByFolder);
-$('folder-view-btn').addEventListener('click', () => {
-  groupByFolder = !groupByFolder;
-  localStorage.setItem('agentpeek-groupby', groupByFolder ? 'folder' : 'group');
-  $('folder-view-btn').classList.toggle('active', groupByFolder);
+$('recent-view-btn').classList.toggle('active', sortRecent);
+$('recent-view-btn').addEventListener('click', () => {
+  sortRecent = !sortRecent;
+  localStorage.setItem('agentpeek-recent', sortRecent ? '1' : '0');
+  $('recent-view-btn').classList.toggle('active', sortRecent);
+  render();
+});
+$('archive-view-btn').addEventListener('click', () => {
+  showArchived = !showArchived;
+  $('archive-view-btn').classList.toggle('active', showArchived);
+  $('archive-view-btn').title = showArchived ? 'Back to active sessions' : 'Show archived sessions';
   render();
 });
 $('c-ok').addEventListener('click', submitCreate);

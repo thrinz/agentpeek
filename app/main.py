@@ -124,7 +124,7 @@ async def no_stale_cache(request: Request, call_next):
 
 class CreateBody(BaseModel):
     name: str
-    group: str           # mandatory — must be one of GROUPS
+    group: str = "General"  # legacy label; clients no longer set or show it
     cwd: str             # mandatory — a directory inside DIRS_ROOT, not the root itself
     mode: str = "ai"     # "ai" runs `cds` in a shell | "shell" | "ui" (Claude chat)
     model: str | None = None  # UI mode only: "opus" | "sonnet" | "haiku"
@@ -134,6 +134,7 @@ class CreateBody(BaseModel):
 class RenameBody(BaseModel):
     new_name: str | None = None
     group: str | None = None
+    archived: bool | None = None  # file the session away / bring it back
 
 
 def _call(fn, *args):
@@ -172,7 +173,7 @@ def create_session(body: CreateBody):
     name = body.name.strip()
     group = body.group.strip().strip("/")
     if group not in _load_folders():
-        raise HTTPException(422, f"Unknown group '{group}'.")
+        group = DEFAULT_FOLDER  # groups are no longer user-facing; never block on one
     if body.mode not in ("shell", "ai", "ui"):
         raise HTTPException(422, "Start option must be 'shell', 'ai', or 'ui'.")
     cwd = _resolve_dir(body.cwd)
@@ -374,6 +375,13 @@ async def ui_paste(session: str, file: UploadFile = File(...)):
 
 @app.patch("/api/sessions/{name}")
 def update_session(name: str, body: RenameBody):
+    # Archive / unarchive: a label only — the session keeps running.
+    if body.archived is not None:
+        if ui_agent.manager.exists(name):
+            ui_agent.manager.set_archived(name, body.archived)
+        else:
+            _call(mux.set_archived, name, body.archived)
+        return {"name": name, "archived": body.archived}
     # Move to a different sidebar folder.
     if body.group is not None:
         group = body.group.strip().strip("/")
@@ -386,7 +394,7 @@ def update_session(name: str, body: RenameBody):
         return {"name": name, "group": group}
     # Rename.
     if body.new_name is None:
-        raise HTTPException(422, "Provide new_name or group.")
+        raise HTTPException(422, "Provide new_name, group or archived.")
     new = body.new_name.strip()
     if ui_agent.manager.exists(name):
         _call(mux.validate_name, new)

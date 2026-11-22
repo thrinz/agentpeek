@@ -62,7 +62,7 @@ body.collapsed #sidebar { display: none; }
 #brand img { display: block; }
 #brand span { font-size: 15px; font-weight: 700; letter-spacing: -0.015em; color: var(--fg); }
 
-#add-folder-btn, #folder-view-btn, #theme-toggle {
+#recent-view-btn, #archive-view-btn, #theme-toggle {
   background: var(--bg-hover);
   color: var(--fg-dim);
   border: 1px solid var(--border);
@@ -72,8 +72,8 @@ body.collapsed #sidebar { display: none; }
   display: flex;
   align-items: center;
 }
-#add-folder-btn:hover, #folder-view-btn:hover, #theme-toggle:hover { color: var(--fg); background: var(--bg-active); }
-#folder-view-btn.active { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+#recent-view-btn:hover, #archive-view-btn:hover, #theme-toggle:hover { color: var(--fg); background: var(--bg-active); }
+#recent-view-btn.active, #archive-view-btn.active { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
 #theme-toggle { font-size: 15px; line-height: 1; }
 
 #collapse-btn, #expand-btn {
@@ -1001,3 +1001,6 @@ dialog menu button {
   background: rgba(96,165,250,.08); color: var(--accent);
   font-size: 15px; pointer-events: none;
 }
+
+/* "Recently active" view: how long ago each session last did something. */
+.session .ago { color: var(--fg-dim); font-size: 11px; margin-left: 6px; white-space: nowrap; flex-shrink: 0; }
