@@ -1,0 +1,99 @@
+# Builds the iOS app on a GitHub macOS runner (eas build --local, signing from EAS) and submits it to TestFlight whenever mobile/ changes on main.
+# Also runs hourly as a safety net: if main has moved past the last deployed commit (tag
+# `testflight-latest`), it deploys; otherwise it exits without building.
+name: TestFlight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/testflight.yml"
+  schedule:
+    - cron: "29 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if the commit was already deployed"
+        type: boolean
+        default: false
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  APP_DIR: mobile
+  DEPLOY_TAG: testflight-latest
+
+jobs:
+  deploy:
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Scheduled and manual runs always deploy main.
+          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
+          fetch-depth: 0
+
+      - name: Decide whether to build
+        id: gate
+        run: |
+          head=$(git rev-parse HEAD)
+          deployed=$(git rev-parse -q --verify "refs/tags/$DEPLOY_TAG^{commit}" 2>/dev/null || echo none)
+          echo "head=$head deployed=$deployed event=$GITHUB_EVENT_NAME force=${{ inputs.force }}"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "push" ] || [ "${{ inputs.force }}" = "true" ] || [ "$deployed" != "$head" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Nothing new since $DEPLOY_TAG; skipping build."
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.build == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: expo/expo-github-action@v8
+        if: steps.gate.outputs.build == 'true'
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        if: steps.gate.outputs.build == 'true'
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the iOS app locally (signing credentials from EAS)
+        if: steps.gate.outputs.build == 'true'
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          EAS_BUILD_NO_EXPO_GO_WARNING: "true"
+        run: eas build --platform ios --profile production --local --non-interactive --output "$RUNNER_TEMP/app.ipa" --message "${{ steps.gate.outputs.head }}"
+
+      - name: Submit to TestFlight
+        if: steps.gate.outputs.build == 'true'
+        working-directory: ${{ env.APP_DIR }}
+        run: eas submit --platform ios --profile production --path "$RUNNER_TEMP/app.ipa" --non-interactive
+
+      - name: Keep the .ipa for a week
+        if: steps.gate.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ steps.gate.outputs.head }}
+          path: ${{ runner.temp }}/app.ipa
+          retention-days: 7
+
+      - name: Record deployed commit
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          git tag -f "$DEPLOY_TAG" "${{ steps.gate.outputs.head }}"
+          git push -f origin "refs/tags/$DEPLOY_TAG"
