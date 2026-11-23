@@ -1,11 +1,11 @@
-# Builds the iOS app on a GitHub macOS runner (eas build --local, signing from EAS) and submits it to TestFlight whenever mobile/ changes on main.
-# Also runs hourly as a safety net: if main has moved past the last deployed commit (tag
+# Builds the iOS app on a GitHub macOS runner (eas build --local, signing from EAS) and submits it to TestFlight whenever mobile/ changes on release/v1.
+# Also runs hourly as a safety net: if release/v1 has moved past the last deployed commit (tag
 # `testflight-latest`), it deploys; otherwise it exits without building.
 name: TestFlight
 
 on:
   push:
-    branches: [main]
+    branches: [release/v1]
     paths:
       - "mobile/**"
       - ".github/workflows/testflight.yml"
@@ -36,8 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Scheduled and manual runs always deploy main.
-          ref: ${{ github.event_name == 'push' && github.sha || 'main' }}
+          # Scheduled and manual runs always deploy release/v1 (cron only fires from the default branch, so this file also lives on main).
+          ref: ${{ github.event_name == 'push' && github.sha || 'release/v1' }}
           fetch-depth: 0
 
       - name: Decide whether to build
@@ -47,11 +47,11 @@ jobs:
           deployed=$(git rev-parse -q --verify "refs/tags/$DEPLOY_TAG^{commit}" 2>/dev/null || echo none)
           echo "head=$head deployed=$deployed event=$GITHUB_EVENT_NAME force=${{ inputs.force }}"
           echo "head=$head" >> "$GITHUB_OUTPUT"
-          if [ "$GITHUB_EVENT_NAME" = "push" ] || [ "${{ inputs.force }}" = "true" ] || [ "$deployed" != "$head" ]; then
+          if [ "${{ inputs.force }}" = "true" ] || [ "$deployed" != "$head" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Nothing new since $DEPLOY_TAG; skipping build."
+            echo "::notice::$head is already deployed ($DEPLOY_TAG); skipping build."
           fi
 
       - uses: actions/setup-node@v4
